@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 面试助手</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <path d="M4 4h20v6H4V4zm0 8h14v6H4v-6zm0 8h20v4H4v-4z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                        <circle cx="22" cy="15" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h1>Interview RAG</h1>
+                    <span>程序员智能面试助手</span>
+                </div>
+            </div>
+
+            <nav class="nav">
+                <button class="nav-item active" data-view="chat">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 3h14v9H5l-3 3V3z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                    问答
+                </button>
+                <button class="nav-item" data-view="index">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="2" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 6h6M6 9h6M6 12h3" stroke="currentColor" stroke-width="1.5"/></svg>
+                    索引管理
+                </button>
+                <button class="nav-item" data-view="docs">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M14 2H4a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V4l-2-2z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M14 2v2h2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                    知识库
+                </button>
+            </nav>
+
+            <div class="status-panel">
+                <div class="status-title">系统状态</div>
+                <div class="status-items">
+                    <div class="status-item">
+                        <span class="status-dot" id="dot-faiss"></span>
+                        <span class="status-label">向量索引</span>
+                        <span class="status-value" id="val-faiss">检测中...</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot" id="dot-embedding"></span>
+                        <span class="status-label">Embedding</span>
+                        <span class="status-value" id="val-embedding">检测中...</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot" id="dot-llm"></span>
+                        <span class="status-label">LLM</span>
+                        <span class="status-value" id="val-llm">检测中...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="kb-panel" id="kb-panel" style="display:none;">
+                <div class="status-title">知识库文件</div>
+                <div class="kb-list" id="kb-list"></div>
+                <div class="kb-meta" id="kb-meta"></div>
+            </div>
+
+            <div class="sidebar-footer">
+                <span class="version">v1.0.0</span>
+            </div>
+        </aside>
+
+        <main class="main">
+            <section class="view chat-view active" id="view-chat">
+                <div class="chat-header">
+                    <div>
+                        <h2>技术问答</h2>
+                        <p class="subtitle">输入 Java / 后端相关问题，系统将从知识库检索并生成回答</p>
+                    </div>
+                    <div class="chat-actions">
+                        <button class="btn-ghost" id="btn-clear">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                            清空对话
+                        </button>
+                    </div>
+                </div>
+
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message system-msg">
+                        <div class="msg-content">
+                            <p>你好！我是基于 RAG 的 Java/后端面试助手。</p>
+                            <p>你可以问我关于 <strong>Java 基础</strong>、<strong>Spring</strong>、<strong>MySQL</strong>、<strong>Redis</strong>、<strong>操作系统</strong>、<strong>计算机网络</strong> 等相关问题。</p>
+                            <p class="hint">💡 点击"索引管理"可重建知识库索引</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chat-input-area">
+                    <div class="input-wrapper">
+                        <textarea id="question-input" placeholder="输入你的问题，例如：HashMap 的扩容机制是什么？" rows="1"></textarea>
+                        <button class="btn-send" id="btn-send" disabled>
+                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                <path d="M2 10l16-7-5 16-4-7-7-2z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="input-hint" id="input-hint">Enter 发送 · Shift+Enter 换行</div>
+                </div>
+            </section>
+
+            <section class="view index-view" id="view-index">
+                <div class="index-header">
+                    <div>
+                        <h2>索引管理</h2>
+                        <p class="subtitle">管理知识库向量索引，支持构建和重建</p>
+                    </div>
+                </div>
+
+                <div class="index-cards">
+                    <div class="card index-status-card">
+                        <div class="card-header">
+                            <h3>当前索引状态</h3>
+                            <span class="badge" id="badge-index">加载中...</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-row">
+                                <div class="metric">
+                                    <span class="metric-value" id="metric-chunks">-</span>
+                                    <span class="metric-label">文本块</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-value" id="metric-files">-</span>
+                                    <span class="metric-label">知识库文件</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-value" id="metric-time">-</span>
+                                    <span class="metric-label">构建时间</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card index-actions-card">
+                        <div class="card-header">
+                            <h3>索引操作</h3>
+                        </div>
+                        <div class="card-body">
+                            <p class="card-desc">首次使用或添加新文档后，需要构建索引。重建会清空旧索引并重新处理所有文件。</p>
+                            <div class="button-group">
+                                <button class="btn-primary" id="btn-build">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5"/></svg>
+                                    构建索引
+                                </button>
+                                <button class="btn-secondary" id="btn-rebuild">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                                    重建索引
+                                </button>
+                            </div>
+                            <div class="progress-wrapper" id="progress-wrapper" style="display:none;">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progress-fill"></div>
+                                </div>
+                                <span class="progress-text" id="progress-text">正在构建...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card files-card">
+                        <div class="card-header">
+                            <h3>知识库文件列表</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="files-list" id="files-list">
+                                <p class="empty-state">暂无数据</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="view docs-view" id="view-docs">
+                <div class="docs-header">
+                    <div>
+                        <h2>知识库说明</h2>
+                        <p class="subtitle">如何使用和维护你的技术知识库</p>
+                    </div>
+                </div>
+
+                <div class="docs-content">
+                    <div class="doc-section">
+                        <h3>📚 添加知识库文件</h3>
+                        <ol>
+                            <li>将 Markdown 文件（<code>.md</code>）放入 <code>data/knowledge_base/</code> 目录</li>
+                            <li>文件会自动按照 <code>#</code>、<code>##</code>、<code>###</code> 标题进行分段</li>
+                            <li>每个分块约 1000 字，块间有 200 字重叠以保证语义完整</li>
+                            <li>点击"索引管理 → 重建索引"使新文件生效</li>
+                        </ol>
+                    </div>
+
+                    <div class="doc-section">
+                        <h3>🔧 系统架构</h3>
+                        <ul>
+                            <li><strong>Embedding 模型</strong>：硅基 Qwen/Qwen3-Embedding-4B</li>
+                            <li><strong>LLM 模型</strong>：百炼 qwen3.7-max-2026-05-20</li>
+                            <li><strong>向量存储</strong>：FAISS IndexFlatIP（内积搜索）</li>
+                            <li><strong>分块策略</strong>：按标题分段 → 按段落切块 → 超长滑窗</li>
+                        </ul>
+                    </div>
+
+                    <div class="doc-section">
+                        <h3>🔗 API 接口</h3>
+                        <table class="api-table">
+                            <thead>
+                                <tr><th>接口</th><th>方法</th><th>说明</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>/api/health</code></td><td>GET</td><td>健康检查</td></tr>
+                                <tr><td><code>/api/index/status</code></td><td>GET</td><td>索引状态</td></tr>
+                                <tr><td><code>/api/index/build</code></td><td>POST</td><td>构建/重建索引</td></tr>
+                                <tr><td><code>/api/query</code></td><td>POST</td><td>RAG 知识库问答</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
