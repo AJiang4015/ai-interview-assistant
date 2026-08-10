@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Data
+data/faiss_index/*.index
+data/faiss_index/*.json
+!data/faiss_index/.gitkeep
+!data/knowledge_base/.gitkeep
+
+# OS
+Thumbs.db
+.DS_Store
