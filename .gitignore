@@ -1,21 +1,106 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-.env
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+*.dist-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# Virtual Environment
 .venv/
 venv/
+env/
+ENV/
+env.bak/
+venv.bak/
 
-# IDE
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDE - JetBrains
 .idea/
-.vscode/
+*.iml
+*.iws
+*.ipr
+out/
 
-# Data
+# IDE - VSCode
+.vscode/
+.history/
+
+# IDE - Eclipse/STS
+.apt_generated
+.classpath
+.factorypath
+.flattened-pom.xml
+.project
+.settings/
+.springBeans
+.sts4-cache
+bin/
+tmp/
+
+# Logging
+*.log
+logs/
+
+# Data - FAISS Index (auto-generated, rebuild via API)
 data/faiss_index/*.index
 data/faiss_index/*.json
+data/faiss_index/*.faiss
 !data/faiss_index/.gitkeep
-!data/knowledge_base/.gitkeep
 
-# OS
+# Data - Knowledge Base is committed with sample files
+# Users can add their own .md files to this directory
+
+# Root-level test files (already moved to data/knowledge_base/)
+/Java基础.md
+/MySQL.md
+/Redis.md
+/Spring.md
+/操作系统.md
+/计算机网络.md
+
+# OS - Windows
 Thumbs.db
+ehthumbs.db
+ehthumbs_server.ini
+Desktop.ini
+$RECYCLE.BIN/
+
+# OS - macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# OS - Linux
+*~
+.policy_cache
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Misc
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+.temp/
+tmp/
 .DS_Store
