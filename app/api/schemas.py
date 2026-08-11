@@ -85,3 +85,27 @@ class DeleteSessionResponse(BaseModel):
 class ClearSessionsResponse(BaseModel):
     success: bool
     deleted_count: int
+
+
+# ==================== Auth Schemas ====================
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=6, max_length=64)
+    display_name: str | None = Field(default=None, max_length=64)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user: dict
+
+
+class UserResponse(BaseModel):
+    username: str
+    display_name: str
+    created_at: str | None = None

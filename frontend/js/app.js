@@ -2,7 +2,8 @@ const API_BASE = '';
 const STORAGE_KEY = 'rag_current_session_id';
 
 const state = {
-    messages: [],
+    sessionMessages: {},
+    pendingStreams: {},
     isLoading: false,
     currentView: 'chat',
     sessionId: null,
@@ -29,7 +30,6 @@ const els = {
     chatSubtitle: document.getElementById('chat-subtitle'),
     questionInput: document.getElementById('question-input'),
     btnSend: document.getElementById('btn-send'),
-    btnClear: document.getElementById('btn-clear'),
     btnBuild: document.getElementById('btn-build'),
     btnRebuild: document.getElementById('btn-rebuild'),
     badgeIndex: document.getElementById('badge-index'),
@@ -150,26 +150,38 @@ async function switchSession(sessionId) {
     state.sessionId = sessionId;
     localStorage.setItem(STORAGE_KEY, sessionId);
     renderSessions();
-    updateSessionIndicator();
 
-    try {
-        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
-        if (res.ok) {
-            const data = await res.json();
-            state.messages = data.history || [];
-            els.chatMessages.innerHTML = '';
+    if (!state.sessionMessages[sessionId]) {
+        try {
+            const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+            if (res.ok) {
+                const data = await res.json();
+                const history = data.history || [];
+                const messages = history.map(msg => ({
+                    role: msg.role,
+                    content: msg.content,
+                    sources: msg.sources || null
+                }));
+                state.sessionMessages[sessionId] = messages;
 
-            if (state.messages.length === 0) {
-                appendSystemMessage('已切换到新会话，开始提问吧！');
-            } else {
-                state.messages.forEach(msg => {
-                    appendMessage(msg.role, msg.content, msg.sources);
-                });
+                if (messages.length === 0) {
+                    state.sessionMessages[sessionId] = [
+                        { role: 'system', content: '已切换到新会话，开始提问吧！' }
+                    ];
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load session history:', e);
+            if (!state.sessionMessages[sessionId]) {
+                state.sessionMessages[sessionId] = [
+                    { role: 'system', content: '已切换到新会话，开始提问吧！' }
+                ];
             }
         }
-    } catch (e) {
-        console.error('Failed to load session history:', e);
     }
+
+    renderMessages(sessionId);
+    updateSessionIndicator();
 }
 
 async function createSession() {
@@ -179,10 +191,15 @@ async function createSession() {
             headers: { 'Content-Type': 'application/json' }
         });
         const data = await res.json();
-        state.sessionId = data.session_id;
-        localStorage.setItem(STORAGE_KEY, data.session_id);
+        const newSessionId = data.session_id;
 
-        state.messages = [];
+        state.sessionMessages[newSessionId] = [
+            { role: 'system', content: '已创建新会话，开始提问吧！' }
+        ];
+
+        state.sessionId = newSessionId;
+        localStorage.setItem(STORAGE_KEY, newSessionId);
+
         els.chatMessages.innerHTML = '';
         appendSystemMessage('已创建新会话，开始提问吧！');
 
@@ -207,13 +224,15 @@ async function deleteSession(sessionId) {
         if (res.ok) {
             state.sessions = state.sessions.filter(s => s.session_id !== sessionId);
 
+            delete state.sessionMessages[sessionId];
+            delete state.pendingStreams[sessionId];
+
             if (state.sessionId === sessionId) {
                 state.sessionId = null;
                 localStorage.removeItem(STORAGE_KEY);
-                state.messages = [];
                 els.chatMessages.innerHTML = '';
-                appendSystemMessage('会话已删除，已创建新会话。');
-                await createSession();
+                appendSystemMessage('会话已删除，点击右上角「+」创建新会话。');
+                updateSessionIndicator();
             } else {
                 renderSessions();
             }
@@ -230,11 +249,103 @@ function updateSessionIndicator() {
 
     if (state.sessionId) {
         els.sessionIndicator.style.display = 'flex';
-        const count = state.messages.filter(m => m.role !== 'system').length;
+        const messages = getMessages(state.sessionId);
+        const count = messages.filter(m => m.role !== 'system').length;
         els.sessionTurnCount.textContent = count;
     } else {
         els.sessionIndicator.style.display = 'none';
+        els.sessionTurnCount.textContent = '0';
     }
+}
+
+function getMessages(sessionId) {
+    if (!sessionId) return [];
+    return state.sessionMessages[sessionId] || [];
+}
+
+function renderMessages(sessionId) {
+    const messages = getMessages(sessionId);
+    els.chatMessages.innerHTML = '';
+
+    messages.forEach(msg => {
+        if (msg.role === 'system') {
+            appendSystemMessage(msg.content);
+        } else {
+            renderMessageElement(msg.role, msg.content, msg.sources);
+        }
+    });
+
+    const pending = state.pendingStreams[sessionId];
+    if (pending) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message assistant';
+
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar';
+        avatar.textContent = 'AI';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'msg-content streaming';
+        contentDiv.innerHTML = escapeHtml(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
+
+        msgDiv.appendChild(avatar);
+        msgDiv.appendChild(contentDiv);
+        els.chatMessages.appendChild(msgDiv);
+        els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    }
+}
+
+function renderMessageElement(role, content, sources = null) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '我' : 'AI';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'msg-content';
+    contentDiv.textContent = content;
+
+    if (sources && sources.length > 0) {
+        const sourcesDiv = document.createElement('div');
+        sourcesDiv.className = 'sources-list';
+        const title = document.createElement('div');
+        title.className = 'sources-title';
+        title.textContent = `参考来源 (${sources.length})`;
+        sourcesDiv.appendChild(title);
+        sources.forEach(s => {
+            const item = document.createElement('div');
+            item.className = 'source-item';
+            const file = document.createElement('span');
+            file.className = 'source-file';
+            file.textContent = s.file;
+            const score = document.createElement('span');
+            score.className = 'source-score';
+            score.textContent = (s.score || 0).toFixed(3);
+            item.appendChild(file);
+            item.appendChild(score);
+            sourcesDiv.appendChild(item);
+        });
+        contentDiv.appendChild(sourcesDiv);
+    }
+
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(contentDiv);
+    els.chatMessages.appendChild(msgDiv);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function appendMessage(role, content, sources = null) {
+    if (!state.sessionId) return;
+
+    const messages = getMessages(state.sessionId);
+    messages.push({ role, content, sources });
+    state.sessionMessages[state.sessionId] = messages;
+
+    renderMessageElement(role, content, sources);
+    updateSessionIndicator();
+    return messages[messages.length - 1];
 }
 
 function escapeHtml(text) {
@@ -269,34 +380,43 @@ async function sendQuestion() {
     const question = els.questionInput.value.trim();
     if (!question || state.isLoading) return;
 
+    const requestSessionId = state.sessionId || '__pending__';
     state.isLoading = true;
     els.btnSend.disabled = true;
 
-    appendMessage('user', question);
+    const messages = getMessages(requestSessionId);
+    messages.push({ role: 'user', content: question, sources: null });
+    state.sessionMessages[requestSessionId] = messages;
+
+    state.pendingStreams[requestSessionId] = {
+        accumulatedContent: '',
+        sourcesData: null
+    };
     els.questionInput.value = '';
     autoResizeInput();
 
-    const assistantMsg = createStreamingMessage();
-    const contentDiv = assistantMsg.querySelector('.msg-content');
+    const isCurrentSession = state.sessionId === requestSessionId;
+    let assistantMsg = null;
+    let contentDiv = null;
+
+    if (isCurrentSession) {
+        assistantMsg = createStreamingMessage();
+        contentDiv = assistantMsg.querySelector('.msg-content');
+    }
+
     let accumulatedContent = '';
     let sourcesData = null;
+    let finalSessionId = requestSessionId;
 
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 180000);
-
-        const body = { question };
-        if (state.sessionId) {
-            body.session_id = state.sessionId;
-        }
-
         const res = await fetch(`${API_BASE}/api/query/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: controller.signal
+            body: JSON.stringify({
+                question,
+                session_id: state.sessionId || undefined
+            })
         });
-        clearTimeout(timeoutId);
 
         if (!res.ok) {
             let errorMsg = '请求失败';
@@ -305,8 +425,10 @@ async function sendQuestion() {
                 const errData = JSON.parse(errText);
                 errorMsg = errData.detail || errData.error || `HTTP ${res.status}`;
             } catch {}
-            contentDiv.textContent = `❌ ${errorMsg}`;
-            removeStreamingCursor(contentDiv);
+            if (contentDiv) {
+                contentDiv.textContent = `❌ ${errorMsg}`;
+                removeStreamingCursor(contentDiv);
+            }
             showToast(errorMsg, 'error');
             state.isLoading = false;
             els.btnSend.disabled = els.questionInput.value.trim().length === 0;
@@ -346,49 +468,82 @@ async function sendQuestion() {
 
                     switch (eventType) {
                         case 'session':
-                            if (data.session_id && data.session_id !== state.sessionId) {
+                            if (data.session_id && finalSessionId === '__pending__') {
+                                finalSessionId = data.session_id;
+                                state.sessionMessages[data.session_id] =
+                                    state.sessionMessages['__pending__'] || [];
+                                delete state.sessionMessages['__pending__'];
+                                state.pendingStreams[data.session_id] =
+                                    state.pendingStreams['__pending__'];
+                                delete state.pendingStreams['__pending__'];
                                 state.sessionId = data.session_id;
                                 localStorage.setItem(STORAGE_KEY, data.session_id);
-                                loadSessions();
+                                renderSessions();
+                                updateSessionIndicator();
                             }
                             break;
 
                         case 'retrieval':
                             sourcesData = data.sources;
+                            if (state.pendingStreams[finalSessionId]) {
+                                state.pendingStreams[finalSessionId].sourcesData = sourcesData;
+                            }
                             break;
 
                         case 'token':
                             accumulatedContent += data.content;
-                            contentDiv.textContent = accumulatedContent;
-                            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                            if (state.pendingStreams[finalSessionId]) {
+                                state.pendingStreams[finalSessionId].accumulatedContent = accumulatedContent;
+                            }
+                            if (contentDiv) {
+                                contentDiv.textContent = accumulatedContent;
+                                els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                            }
                             break;
 
                         case 'done':
                             accumulatedContent = data.answer || accumulatedContent;
-                            contentDiv.textContent = accumulatedContent;
-                            removeStreamingCursor(contentDiv);
 
-                            if (data.session_id && data.session_id !== state.sessionId) {
-                                state.sessionId = data.session_id;
-                                localStorage.setItem(STORAGE_KEY, data.session_id);
-                                loadSessions();
+                            if (data.session_id) {
+                                finalSessionId = data.session_id;
                             }
 
                             if (data.sources && data.sources.length > 0) {
-                                appendSourcesToMessage(contentDiv, data.sources);
+                                sourcesData = data.sources;
                             }
 
-                            state.messages.push({
-                                role: 'assistant',
-                                content: accumulatedContent,
-                                sources: data.sources || sourcesData
-                            });
-                            updateSessionIndicator();
+                            if (finalSessionId && state.sessionMessages[finalSessionId]) {
+                                state.sessionMessages[finalSessionId].push({
+                                    role: 'assistant',
+                                    content: accumulatedContent,
+                                    sources: sourcesData
+                                });
+                            }
+
+                            delete state.pendingStreams[finalSessionId];
+
+                            if (contentDiv) {
+                                contentDiv.textContent = accumulatedContent;
+                                if (sourcesData && sourcesData.length > 0) {
+                                    appendSourcesToMessage(contentDiv, sourcesData);
+                                }
+                                removeStreamingCursor(contentDiv);
+                            }
+
+                            if (state.sessionId === finalSessionId) {
+                                updateSessionIndicator();
+                            } else {
+                                showToast(`会话 ${finalSessionId.slice(0, 8)} 的 AI 回复已完成`, 'info');
+                            }
+
+                            loadSessions();
                             break;
 
                         case 'error':
-                            contentDiv.textContent = `❌ ${data.message || '未知错误'}`;
-                            removeStreamingCursor(contentDiv);
+                            if (contentDiv) {
+                                contentDiv.textContent = `❌ ${data.message || '未知错误'}`;
+                                removeStreamingCursor(contentDiv);
+                            }
                             showToast(data.message || '请求失败', 'error');
                             break;
                     }
@@ -398,8 +553,10 @@ async function sendQuestion() {
             }
         }
     } catch (e) {
-        contentDiv.textContent = '❌ 网络错误，请检查后端服务是否启动。';
-        removeStreamingCursor(contentDiv);
+        if (contentDiv) {
+            contentDiv.textContent = '❌ 网络错误，请检查后端服务是否启动。';
+            removeStreamingCursor(contentDiv);
+        }
         showToast('网络错误', 'error');
     } finally {
         state.isLoading = false;
@@ -458,50 +615,6 @@ function appendSourcesToMessage(contentDiv, sources) {
     contentDiv.appendChild(sourcesDiv);
 }
 
-function appendMessage(role, content, sources = null) {
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `message ${role}`;
-
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = role === 'user' ? '我' : 'AI';
-
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'msg-content';
-    contentDiv.textContent = content;
-
-    if (sources && sources.length > 0) {
-        const sourcesDiv = document.createElement('div');
-        sourcesDiv.className = 'sources-list';
-        const title = document.createElement('div');
-        title.className = 'sources-title';
-        title.textContent = `参考来源 (${sources.length})`;
-        sourcesDiv.appendChild(title);
-        sources.forEach(s => {
-            const item = document.createElement('div');
-            item.className = 'source-item';
-            const file = document.createElement('span');
-            file.className = 'source-file';
-            file.textContent = s.file;
-            const score = document.createElement('span');
-            score.className = 'source-score';
-            score.textContent = (s.score || 0).toFixed(3);
-            item.appendChild(file);
-            item.appendChild(score);
-            sourcesDiv.appendChild(item);
-        });
-        contentDiv.appendChild(sourcesDiv);
-    }
-
-    msgDiv.appendChild(avatar);
-    msgDiv.appendChild(contentDiv);
-    els.chatMessages.appendChild(msgDiv);
-    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-
-    state.messages.push({ role, content, sources });
-    return msgDiv;
-}
-
 function appendSystemMessage(text) {
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message system-msg';
@@ -514,10 +627,6 @@ function appendSystemMessage(text) {
     els.chatMessages.appendChild(msgDiv);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
-
-els.btnClear.addEventListener('click', () => {
-    createSession();
-});
 
 // ============ Index Management ============
 
@@ -617,8 +726,193 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
+// ============ Auth Module ============
+
+const AUTH_TOKEN_KEY = 'rag_auth_token';
+const AUTH_USER_KEY = 'rag_auth_user';
+
+let authState = {
+    user: null,
+    token: null,
+    isRegisterMode: false
+};
+
+function initAuth() {
+    authState.token = localStorage.getItem(AUTH_TOKEN_KEY);
+    authState.user = JSON.parse(localStorage.getItem(AUTH_USER_KEY) || 'null');
+
+    if (authState.token && authState.user) {
+        showUserPanel();
+    } else {
+        showLoginPrompt();
+    }
+
+    document.getElementById('btn-login').addEventListener('click', openLoginModal);
+    document.getElementById('btn-logout').addEventListener('click', handleLogout);
+    document.getElementById('modal-close').addEventListener('click', closeLoginModal);
+    document.getElementById('btn-switch-form').addEventListener('click', switchAuthMode);
+    document.getElementById('btn-submit-login').addEventListener('click', handleAuthSubmit);
+
+    const pwdInput = document.getElementById('login-password');
+    const usrInput = document.getElementById('login-username');
+    if (pwdInput) {
+        pwdInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') handleAuthSubmit();
+        });
+    }
+    if (usrInput) {
+        usrInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') handleAuthSubmit();
+        });
+    }
+}
+
+function openLoginModal() {
+    authState.isRegisterMode = false;
+    updateAuthModalUI();
+    document.getElementById('login-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('login-username').focus(), 100);
+}
+
+function closeLoginModal() {
+    document.getElementById('login-modal').style.display = 'none';
+}
+
+function switchAuthMode() {
+    authState.isRegisterMode = !authState.isRegisterMode;
+    updateAuthModalUI();
+}
+
+function updateAuthModalUI() {
+    const modalTitle = document.getElementById('modal-title');
+    const submitBtn = document.getElementById('btn-submit-login');
+    const switchText = document.getElementById('switch-text');
+    const switchBtn = document.getElementById('btn-switch-form');
+    const displayNameGroup = document.getElementById('display-name-group');
+
+    if (authState.isRegisterMode) {
+        modalTitle.textContent = '注册账号';
+        submitBtn.textContent = '注册';
+        switchText.textContent = '已有账号？';
+        switchBtn.textContent = '立即登录';
+        displayNameGroup.style.display = 'block';
+    } else {
+        modalTitle.textContent = '登录';
+        submitBtn.textContent = '登录';
+        switchText.textContent = '还没有账号？';
+        switchBtn.textContent = '立即注册';
+        displayNameGroup.style.display = 'none';
+    }
+}
+
+async function handleAuthSubmit() {
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const displayName = document.getElementById('register-display-name')?.value.trim();
+
+    if (!username || !password) {
+        showToast('请输入用户名和密码', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btn-submit-login');
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = authState.isRegisterMode ? '注册中...' : '登录中...';
+
+    try {
+        let res;
+        if (authState.isRegisterMode) {
+            res = await fetch(`${API_BASE}/api/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username,
+                    password,
+                    display_name: displayName || null
+                })
+            });
+        } else {
+            res = await fetch(`${API_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+        }
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '请求失败');
+        }
+
+        const data = await res.json();
+        authState.token = data.token;
+        authState.user = data.user;
+
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+
+        showUserPanel();
+        closeLoginModal();
+        showToast(authState.isRegisterMode ? '注册成功' : '登录成功', 'success');
+
+        document.getElementById('login-username').value = '';
+        document.getElementById('login-password').value = '';
+        document.getElementById('register-display-name').value = '';
+
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+async function handleLogout() {
+    if (!confirm('确定要退出登录吗？')) return;
+
+    authState.token = null;
+    authState.user = null;
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_USER_KEY);
+
+    showLoginPrompt();
+    showToast('已退出登录', 'info');
+}
+
+function showUserPanel() {
+    const panel = document.getElementById('user-panel');
+    const prompt = document.getElementById('login-prompt');
+
+    panel.style.display = 'flex';
+    prompt.style.display = 'none';
+
+    const nameEl = document.getElementById('user-name');
+    const avatarEl = document.getElementById('user-avatar');
+    if (authState.user) {
+        nameEl.textContent = authState.user.display_name || authState.user.username;
+        avatarEl.textContent = (authState.user.display_name || authState.user.username).charAt(0).toUpperCase();
+    }
+}
+
+function showLoginPrompt() {
+    const panel = document.getElementById('user-panel');
+    const prompt = document.getElementById('login-prompt');
+
+    panel.style.display = 'none';
+    prompt.style.display = 'block';
+}
+
+function getAuthHeaders() {
+    if (authState.token) {
+        return { 'Authorization': `Bearer ${authState.token}` };
+    }
+    return {};
+}
+
 // ============ Init ============
 checkHealth();
 loadIndexStatus();
 loadSessions();
+initAuth();
 setInterval(checkHealth, 30000);

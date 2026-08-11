@@ -7,13 +7,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.api.routes import router
+from app.api.auth import router as auth_router
 from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
 from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
+from app.services.auth_service import AuthService
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
 from app.storage.session_store import SessionStore
+from app.storage.user_store import UserStore
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,11 +28,14 @@ llm_client: LLMClient | None = None
 rag_service: RAGService | None = None
 index_service: IndexService | None = None
 session_store: SessionStore | None = None
+user_store: UserStore | None = None
+auth_service: AuthService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global faiss_store, doc_store, embedding_service, llm_client, rag_service, index_service, session_store
+    global faiss_store, doc_store, embedding_service, llm_client, rag_service
+    global index_service, session_store, user_store, auth_service
 
     logger.info("Initializing services...")
 
@@ -49,6 +55,17 @@ async def lifespan(app: FastAPI):
     )
     await session_store.connect()
 
+    # Initialize Redis user store
+    user_store = UserStore(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+    )
+    await user_store.connect()
+
+    auth_service = AuthService(user_store)
+
     index_service = IndexService(faiss_store, doc_store, embedding_service)
     rag_service = RAGService(faiss_store, embedding_service, llm_client, session_store)
 
@@ -64,6 +81,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Redis session store not available, session features disabled")
 
+    if user_store.is_connected:
+        logger.info("Redis user store connected successfully")
+    else:
+        logger.warning("Redis user store not available, auth features disabled")
+
     logger.info("Services initialized successfully")
     yield
 
@@ -71,7 +93,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     if session_store and session_store.is_connected:
         await session_store.close()
-        logger.info("Redis connection closed")
+    if user_store and user_store.is_connected:
+        await user_store.close()
+    logger.info("Redis connections closed")
 
 
 app = FastAPI(
@@ -90,6 +114,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(auth_router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():

@@ -75,6 +75,28 @@
             </div>
 
             <div class="sidebar-footer">
+                <div class="user-panel" id="user-panel" style="display:none;">
+                    <div class="user-info">
+                        <div class="user-avatar" id="user-avatar">U</div>
+                        <div class="user-detail">
+                            <div class="user-name" id="user-name"></div>
+                            <div class="user-status">已登录</div>
+                        </div>
+                    </div>
+                    <button class="btn-logout" id="btn-logout" title="退出登录">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M9 2h3v10H9M5 7h7M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="login-prompt" id="login-prompt">
+                    <button class="btn-login" id="btn-login">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M7 1a3 3 0 100 6 3 3 0 000-6zM2 12a5 5 0 0110 0" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                        </svg>
+                        登录
+                    </button>
+                </div>
                 <span class="version">v1.0.0</span>
             </div>
         </aside>
@@ -91,10 +113,6 @@
                             <span class="session-indicator-dot"></span>
                             <span id="session-turn-count">0</span> 轮对话
                         </span>
-                        <button class="btn-ghost" id="btn-clear">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-                            清空对话
-                        </button>
                     </div>
                 </div>
 
@@ -240,6 +258,35 @@
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <!-- Login Modal -->
+    <div class="modal-overlay" id="login-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">登录</h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="login-username" placeholder="请输入用户名" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="login-password" placeholder="请输入密码" autocomplete="current-password">
+                </div>
+                <div class="form-group" id="display-name-group" style="display:none;">
+                    <label>昵称（可选）</label>
+                    <input type="text" id="register-display-name" placeholder="显示名称">
+                </div>
+                <button class="btn-primary btn-full" id="btn-submit-login">登录</button>
+                <div class="form-switch">
+                    <span id="switch-text">还没有账号？</span>
+                    <button class="btn-link" id="btn-switch-form">立即注册</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="js/app.js"></script>
 </body>
