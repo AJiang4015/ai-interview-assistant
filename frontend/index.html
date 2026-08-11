@@ -64,6 +64,16 @@
                 <div class="kb-meta" id="kb-meta"></div>
             </div>
 
+            <div class="sessions-panel">
+                <div class="sessions-header">
+                    <span class="status-title">会话历史</span>
+                    <button class="btn-new-session" id="btn-new-session" title="新建会话">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.5"/></svg>
+                    </button>
+                </div>
+                <div class="sessions-list" id="sessions-list"></div>
+            </div>
+
             <div class="sidebar-footer">
                 <span class="version">v1.0.0</span>
             </div>
@@ -74,9 +84,13 @@
                 <div class="chat-header">
                     <div>
                         <h2>技术问答</h2>
-                        <p class="subtitle">输入 Java / 后端相关问题，系统将从知识库检索并生成回答</p>
+                        <p class="subtitle" id="chat-subtitle">输入 Java / 后端相关问题，系统将从知识库检索并生成回答</p>
                     </div>
                     <div class="chat-actions">
+                        <span class="session-indicator" id="session-indicator" style="display:none;">
+                            <span class="session-indicator-dot"></span>
+                            <span id="session-turn-count">0</span> 轮对话
+                        </span>
                         <button class="btn-ghost" id="btn-clear">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                             清空对话

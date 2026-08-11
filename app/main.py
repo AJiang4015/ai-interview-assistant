@@ -13,6 +13,7 @@ from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
+from app.storage.session_store import SessionStore
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,11 +24,12 @@ embedding_service: EmbeddingService | None = None
 llm_client: LLMClient | None = None
 rag_service: RAGService | None = None
 index_service: IndexService | None = None
+session_store: SessionStore | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global faiss_store, doc_store, embedding_service, llm_client, rag_service, index_service
+    global faiss_store, doc_store, embedding_service, llm_client, rag_service, index_service, session_store
 
     logger.info("Initializing services...")
 
@@ -36,8 +38,19 @@ async def lifespan(app: FastAPI):
     embedding_service = EmbeddingService()
     llm_client = LLMClient()
 
+    # Initialize Redis session store
+    session_store = SessionStore(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+        ttl_seconds=settings.session_ttl,
+        max_history_turns=settings.max_history_turns,
+    )
+    await session_store.connect()
+
     index_service = IndexService(faiss_store, doc_store, embedding_service)
-    rag_service = RAGService(faiss_store, embedding_service, llm_client)
+    rag_service = RAGService(faiss_store, embedding_service, llm_client, session_store)
 
     idx_path = Path(settings.idx_path)
     if (idx_path / "index.faiss").exists():
@@ -46,16 +59,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No existing index found, index is empty")
 
+    if session_store.is_connected:
+        logger.info("Redis session store connected successfully")
+    else:
+        logger.warning("Redis session store not available, session features disabled")
+
     logger.info("Services initialized successfully")
     yield
+
+    # Cleanup
     logger.info("Shutting down...")
+    if session_store and session_store.is_connected:
+        await session_store.close()
+        logger.info("Redis connection closed")
 
 
 app = FastAPI(
     title="Java 程序员智能面试助手",
     description="基于 RAG + LLM 的 Java/后端技术问答系统",
-    version="1.0.0",
-    lifespan=lifespan
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

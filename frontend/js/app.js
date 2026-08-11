@@ -1,9 +1,12 @@
 const API_BASE = '';
+const STORAGE_KEY = 'rag_current_session_id';
 
 const state = {
     messages: [],
     isLoading: false,
-    currentView: 'chat'
+    currentView: 'chat',
+    sessionId: null,
+    sessions: []
 };
 
 const els = {
@@ -23,6 +26,7 @@ const els = {
     kbList: document.getElementById('kb-list'),
     kbMeta: document.getElementById('kb-meta'),
     chatMessages: document.getElementById('chat-messages'),
+    chatSubtitle: document.getElementById('chat-subtitle'),
     questionInput: document.getElementById('question-input'),
     btnSend: document.getElementById('btn-send'),
     btnClear: document.getElementById('btn-clear'),
@@ -36,6 +40,10 @@ const els = {
     progressWrapper: document.getElementById('progress-wrapper'),
     progressFill: document.getElementById('progress-fill'),
     progressText: document.getElementById('progress-text'),
+    sessionsList: document.getElementById('sessions-list'),
+    btnNewSession: document.getElementById('btn-new-session'),
+    sessionIndicator: document.getElementById('session-indicator'),
+    sessionTurnCount: document.getElementById('session-turn-count'),
     toast: document.getElementById('toast')
 };
 
@@ -82,6 +90,159 @@ function updateStatus(key, status, value) {
     val.textContent = value || status;
 }
 
+// ============ Session Management ============
+async function loadSessions() {
+    try {
+        const res = await fetch(`${API_BASE}/api/sessions`);
+        const data = await res.json();
+        state.sessions = data.sessions || [];
+        renderSessions();
+
+        if (!state.sessionId && state.sessions.length > 0) {
+            const savedId = localStorage.getItem(STORAGE_KEY);
+            if (savedId && state.sessions.some(s => s.session_id === savedId)) {
+                await switchSession(savedId);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load sessions:', e);
+    }
+}
+
+function renderSessions() {
+    if (!els.sessionsList) return;
+
+    if (state.sessions.length === 0) {
+        els.sessionsList.innerHTML = '<div class="session-empty">暂无会话</div>';
+        return;
+    }
+
+    els.sessionsList.innerHTML = state.sessions.map(s => {
+        const title = s.title || `会话 ${s.session_id.slice(0, 8)}`;
+        const activeClass = s.session_id === state.sessionId ? ' active' : '';
+        return `
+            <div class="session-item${activeClass}" data-session-id="${s.session_id}">
+                <span class="session-item-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+                <span class="session-item-delete" data-delete-id="${s.session_id}" title="删除">×</span>
+            </div>
+        `;
+    }).join('');
+
+    els.sessionsList.querySelectorAll('.session-item').forEach(item => {
+        const sessionId = item.dataset.sessionId;
+        item.addEventListener('click', (e) => {
+            if (e.target.classList.contains('session-item-delete')) return;
+            switchSession(sessionId);
+        });
+    });
+
+    els.sessionsList.querySelectorAll('.session-item-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteSession(btn.dataset.deleteId);
+        });
+    });
+}
+
+async function switchSession(sessionId) {
+    if (state.sessionId === sessionId) return;
+
+    state.sessionId = sessionId;
+    localStorage.setItem(STORAGE_KEY, sessionId);
+    renderSessions();
+    updateSessionIndicator();
+
+    try {
+        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+        if (res.ok) {
+            const data = await res.json();
+            state.messages = data.history || [];
+            els.chatMessages.innerHTML = '';
+
+            if (state.messages.length === 0) {
+                appendSystemMessage('已切换到新会话，开始提问吧！');
+            } else {
+                state.messages.forEach(msg => {
+                    appendMessage(msg.role, msg.content, msg.sources);
+                });
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load session history:', e);
+    }
+}
+
+async function createSession() {
+    try {
+        const res = await fetch(`${API_BASE}/api/sessions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        state.sessionId = data.session_id;
+        localStorage.setItem(STORAGE_KEY, data.session_id);
+
+        state.messages = [];
+        els.chatMessages.innerHTML = '';
+        appendSystemMessage('已创建新会话，开始提问吧！');
+
+        await loadSessions();
+        renderSessions();
+        updateSessionIndicator();
+
+        showToast('新会话已创建', 'success');
+    } catch (e) {
+        console.error('Failed to create session:', e);
+        showToast('创建会话失败', 'error');
+    }
+}
+
+async function deleteSession(sessionId) {
+    if (!confirm('确定删除该会话吗？')) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+            method: 'DELETE'
+        });
+        if (res.ok) {
+            state.sessions = state.sessions.filter(s => s.session_id !== sessionId);
+
+            if (state.sessionId === sessionId) {
+                state.sessionId = null;
+                localStorage.removeItem(STORAGE_KEY);
+                state.messages = [];
+                els.chatMessages.innerHTML = '';
+                appendSystemMessage('会话已删除，已创建新会话。');
+                await createSession();
+            } else {
+                renderSessions();
+            }
+            showToast('会话已删除', 'success');
+        }
+    } catch (e) {
+        console.error('Failed to delete session:', e);
+        showToast('删除会话失败', 'error');
+    }
+}
+
+function updateSessionIndicator() {
+    if (!els.sessionIndicator) return;
+
+    if (state.sessionId) {
+        els.sessionIndicator.style.display = 'flex';
+        const count = state.messages.filter(m => m.role !== 'system').length;
+        els.sessionTurnCount.textContent = count;
+    } else {
+        els.sessionIndicator.style.display = 'none';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // ============ Chat ============
 els.questionInput.addEventListener('input', () => {
     els.btnSend.disabled = els.questionInput.value.trim().length === 0 || state.isLoading;
@@ -96,6 +257,7 @@ els.questionInput.addEventListener('keydown', (e) => {
 });
 
 els.btnSend.addEventListener('click', sendQuestion);
+els.btnNewSession?.addEventListener('click', createSession);
 
 function autoResizeInput() {
     const el = els.questionInput;
@@ -114,42 +276,186 @@ async function sendQuestion() {
     els.questionInput.value = '';
     autoResizeInput();
 
-    const loadingMsg = appendLoading();
+    const assistantMsg = createStreamingMessage();
+    const contentDiv = assistantMsg.querySelector('.msg-content');
+    let accumulatedContent = '';
+    let sourcesData = null;
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-        const res = await fetch(`${API_BASE}/api/query`, {
+        const body = { question };
+        if (state.sessionId) {
+            body.session_id = state.sessionId;
+        }
+
+        const res = await fetch(`${API_BASE}/api/query/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question }),
+            body: JSON.stringify(body),
             signal: controller.signal
         });
         clearTimeout(timeoutId);
 
-        removeLoading(loadingMsg);
-
         if (!res.ok) {
             let errorMsg = '请求失败';
             try {
-                const err = await res.json();
-                errorMsg = err.detail || err.error || `HTTP ${res.status}`;
+                const errText = await res.text();
+                const errData = JSON.parse(errText);
+                errorMsg = errData.detail || errData.error || `HTTP ${res.status}`;
             } catch {}
-            appendMessage('assistant', `❌ ${errorMsg}`);
+            contentDiv.textContent = `❌ ${errorMsg}`;
+            removeStreamingCursor(contentDiv);
             showToast(errorMsg, 'error');
-        } else {
-            const data = await res.json();
-            appendMessage('assistant', data.answer, data.sources);
+            state.isLoading = false;
+            els.btnSend.disabled = els.questionInput.value.trim().length === 0;
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            const events = buffer.split('\n\n');
+            buffer = events.pop();
+
+            for (const event of events) {
+                const lines = event.split('\n');
+                let eventType = 'message';
+                let dataStr = '';
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.slice(7);
+                    } else if (line.startsWith('data: ')) {
+                        dataStr = line.slice(6);
+                    }
+                }
+
+                if (!dataStr) continue;
+
+                try {
+                    const data = JSON.parse(dataStr);
+
+                    switch (eventType) {
+                        case 'session':
+                            if (data.session_id && data.session_id !== state.sessionId) {
+                                state.sessionId = data.session_id;
+                                localStorage.setItem(STORAGE_KEY, data.session_id);
+                                loadSessions();
+                            }
+                            break;
+
+                        case 'retrieval':
+                            sourcesData = data.sources;
+                            break;
+
+                        case 'token':
+                            accumulatedContent += data.content;
+                            contentDiv.textContent = accumulatedContent;
+                            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                            break;
+
+                        case 'done':
+                            accumulatedContent = data.answer || accumulatedContent;
+                            contentDiv.textContent = accumulatedContent;
+                            removeStreamingCursor(contentDiv);
+
+                            if (data.session_id && data.session_id !== state.sessionId) {
+                                state.sessionId = data.session_id;
+                                localStorage.setItem(STORAGE_KEY, data.session_id);
+                                loadSessions();
+                            }
+
+                            if (data.sources && data.sources.length > 0) {
+                                appendSourcesToMessage(contentDiv, data.sources);
+                            }
+
+                            state.messages.push({
+                                role: 'assistant',
+                                content: accumulatedContent,
+                                sources: data.sources || sourcesData
+                            });
+                            updateSessionIndicator();
+                            break;
+
+                        case 'error':
+                            contentDiv.textContent = `❌ ${data.message || '未知错误'}`;
+                            removeStreamingCursor(contentDiv);
+                            showToast(data.message || '请求失败', 'error');
+                            break;
+                    }
+                } catch (e) {
+                    console.error('Failed to parse SSE event:', e);
+                }
+            }
         }
     } catch (e) {
-        removeLoading(loadingMsg);
-        appendMessage('assistant', '❌ 网络错误，请检查后端服务是否启动。');
+        contentDiv.textContent = '❌ 网络错误，请检查后端服务是否启动。';
+        removeStreamingCursor(contentDiv);
         showToast('网络错误', 'error');
     } finally {
         state.isLoading = false;
         els.btnSend.disabled = els.questionInput.value.trim().length === 0;
     }
+}
+
+function createStreamingMessage() {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message assistant';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = 'AI';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'msg-content streaming';
+    contentDiv.innerHTML = '<span class="streaming-cursor"></span>';
+
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(contentDiv);
+    els.chatMessages.appendChild(msgDiv);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+
+    return msgDiv;
+}
+
+function removeStreamingCursor(contentDiv) {
+    const cursor = contentDiv.querySelector('.streaming-cursor');
+    if (cursor) cursor.remove();
+    contentDiv.classList.remove('streaming');
+}
+
+function appendSourcesToMessage(contentDiv, sources) {
+    if (!sources || sources.length === 0) return;
+
+    const sourcesDiv = document.createElement('div');
+    sourcesDiv.className = 'sources-list';
+    const title = document.createElement('div');
+    title.className = 'sources-title';
+    title.textContent = `参考来源 (${sources.length})`;
+    sourcesDiv.appendChild(title);
+    sources.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'source-item';
+        const file = document.createElement('span');
+        file.className = 'source-file';
+        file.textContent = s.file;
+        const score = document.createElement('span');
+        score.className = 'source-score';
+        score.textContent = (s.score || 0).toFixed(3);
+        item.appendChild(file);
+        item.appendChild(score);
+        sourcesDiv.appendChild(item);
+    });
+    contentDiv.appendChild(sourcesDiv);
 }
 
 function appendMessage(role, content, sources = null) {
@@ -196,42 +502,21 @@ function appendMessage(role, content, sources = null) {
     return msgDiv;
 }
 
-function appendLoading() {
+function appendSystemMessage(text) {
     const msgDiv = document.createElement('div');
-    msgDiv.className = 'message assistant';
-    msgDiv.id = 'loading-msg';
-
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = 'AI';
+    msgDiv.className = 'message system-msg';
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content';
-    const typing = document.createElement('div');
-    typing.className = 'typing';
-    typing.innerHTML = '<span></span><span></span><span></span>';
-    contentDiv.appendChild(typing);
+    contentDiv.innerHTML = `<p>${text}</p>`;
 
-    msgDiv.appendChild(avatar);
     msgDiv.appendChild(contentDiv);
     els.chatMessages.appendChild(msgDiv);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-    return msgDiv;
-}
-
-function removeLoading(msgEl) {
-    if (msgEl && msgEl.parentNode) {
-        msgEl.remove();
-    }
 }
 
 els.btnClear.addEventListener('click', () => {
-    state.messages = [];
-    els.chatMessages.innerHTML = '';
-    const welcome = document.createElement('div');
-    welcome.className = 'message system-msg';
-    welcome.innerHTML = '<div class="msg-content"><p>对话已清空</p></div>';
-    els.chatMessages.appendChild(welcome);
+    createSession();
 });
 
 // ============ Index Management ============
@@ -335,4 +620,5 @@ function showToast(message, type = 'info') {
 // ============ Init ============
 checkHealth();
 loadIndexStatus();
+loadSessions();
 setInterval(checkHealth, 30000);

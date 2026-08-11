@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     request_timeout: int = 30
 
+    # Redis configuration
+    redis_host: str = "192.168.127.101"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str = ""
+    session_ttl: int = 3600
+    max_history_turns: int = 20
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property

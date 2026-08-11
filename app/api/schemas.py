@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, description="Session ID for multi-turn dialogue")
 
 
 class SourceInfo(BaseModel):
@@ -15,6 +16,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceInfo]
     retrieved_chunks: list[str]
+    session_id: str | None = None
 
 
 class BuildIndexRequest(BaseModel):
@@ -39,3 +41,47 @@ class HealthResponse(BaseModel):
     faiss_index: str
     embedding_service: str
     llm_service: str
+    redis_status: str = "disconnected"
+
+
+# Session-related schemas
+
+class CreateSessionRequest(BaseModel):
+    session_id: str | None = Field(default=None, description="Custom session ID, auto-generated if not provided")
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    created_at: str
+    updated_at: str
+    turn_count: int
+    title: str | None = None
+
+
+class SessionListResponse(BaseModel):
+    total_sessions: int
+    sessions: list[SessionResponse]
+
+
+class MessageInfo(BaseModel):
+    role: str
+    content: str
+    timestamp: str
+    sources: list[dict] | None = None
+    metadata: dict | None = None
+
+
+class SessionHistoryResponse(BaseModel):
+    session_id: str
+    history: list[MessageInfo]
+    total_turns: int
+
+
+class DeleteSessionResponse(BaseModel):
+    success: bool
+    session_id: str
+
+
+class ClearSessionsResponse(BaseModel):
+    success: bool
+    deleted_count: int

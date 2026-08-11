@@ -1,3 +1,4 @@
+import json
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
@@ -42,6 +43,35 @@ class LLMClient:
         except Exception as e:
             raise LLMAPIError(f"LLM chat failed: {e}") from e
 
+    async def chat_stream(self, prompt: str, system: str | None = None):
+        """Stream chat completions, yielding text chunks as they arrive."""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "stream": True,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+
+        try:
+            async for chunk in self._chat_stream_retry(payload, headers):
+                yield chunk
+        except LLMAPIError:
+            raise
+        except RetryError as e:
+            raise LLMAPIError(f"LLM API retry exhausted: {e.last_attempt.exception()}") from e
+        except Exception as e:
+            raise LLMAPIError(f"LLM chat stream failed: {e}") from e
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
     async def _chat_with_retry(self, payload: dict, headers: dict) -> str:
         try:
@@ -52,3 +82,26 @@ class LLMClient:
                 return data["choices"][0]["message"]["content"]
         except httpx.HTTPError as e:
             raise LLMAPIError(f"LLM API request failed: {e}") from e
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
+    async def _chat_stream_retry(self, payload: dict, headers: dict):
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout * 3) as client:
+                async with client.stream("POST", BAILIAN_API, json=payload, headers=headers) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    delta = data["choices"][0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse stream data: {data_str[:100]}")
+        except httpx.HTTPError as e:
+            raise LLMAPIError(f"LLM API stream request failed: {e}") from e
