@@ -20,21 +20,39 @@ class IndexService:
         )
 
     async def build_index(self, rebuild: bool = False) -> BuildIndexResponse:
-        md_files = self.splitter.scan_md_files(settings.kb_path)
-        if not md_files:
-            logger.warning("No .md files found in knowledge base directory")
+        kb_files = self.splitter.scan_md_files(settings.kb_path)
+        if not kb_files:
+            logger.warning("No document files found in knowledge base directory")
             return BuildIndexResponse(
                 status="warning",
                 total_chunks=0,
                 files_processed=0
             )
 
-        logger.info(f"Found {len(md_files)} md files, processing...")
+        logger.info(f"Found {len(kb_files)} files, processing...")
         chunks = []
-        for f in md_files:
-            file_chunks = self.splitter.split_file(f)
-            chunks.extend(file_chunks)
-        logger.info(f"Split into {len(chunks)} chunks")
+        failed_files = []
+        for f in kb_files:
+            try:
+                file_chunks = self.splitter.split_file(f)
+                if file_chunks:
+                    chunks.extend(file_chunks)
+                else:
+                    logger.warning(f"No chunks produced for file: {f.name}")
+                    failed_files.append(f.name)
+            except Exception as e:
+                logger.error(f"Failed to process {f.name}: {e}")
+                failed_files.append(f.name)
+
+        if not chunks:
+            logger.warning("No valid chunks produced from any file")
+            return BuildIndexResponse(
+                status="warning",
+                total_chunks=0,
+                files_processed=len(kb_files) - len(failed_files)
+            )
+
+        logger.info(f"Split into {len(chunks)} chunks from {len(kb_files) - len(failed_files)} files")
 
         contents = [c["content"] for c in chunks]
         vectors = await self.embedding.encode(contents)
@@ -47,11 +65,15 @@ class IndexService:
         self.faiss.save(settings.idx_path)
         self.doc_store.save(chunks)
 
-        logger.info(f"Index built: {len(chunks)} chunks from {len(md_files)} files")
+        status_msg = f"Index built: {len(chunks)} chunks from {len(kb_files) - len(failed_files)} files"
+        if failed_files:
+            status_msg += f" (failed: {', '.join(failed_files)})"
+        logger.info(status_msg)
+
         return BuildIndexResponse(
             status="success",
             total_chunks=len(chunks),
-            files_processed=len(md_files)
+            files_processed=len(kb_files) - len(failed_files)
         )
 
     def get_status(self) -> IndexStatusResponse:

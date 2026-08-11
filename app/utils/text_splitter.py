@@ -1,5 +1,65 @@
 import re
 from pathlib import Path
+from typing import Optional
+
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+SUPPORTED_EXTENSIONS = {".md", ".pdf", ".docx"}
+
+
+class DocumentParser:
+    """Parse different document formats into plain text."""
+
+    @staticmethod
+    def parse_file(file_path: Path) -> Optional[str]:
+        ext = file_path.suffix.lower()
+        try:
+            if ext == ".md":
+                return DocumentParser._parse_markdown(file_path)
+            elif ext == ".pdf":
+                return DocumentParser._parse_pdf(file_path)
+            elif ext == ".docx":
+                return DocumentParser._parse_docx(file_path)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Failed to parse {file_path.name}: {type(e).__name__}: {e}")
+            return None
+
+    @staticmethod
+    def _parse_markdown(file_path: Path) -> str:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def _parse_pdf(file_path: Path) -> str:
+        from pypdf import PdfReader
+        reader = PdfReader(str(file_path))
+        text_parts = []
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text.strip())
+        return "\n\n".join(text_parts)
+
+    @staticmethod
+    def _parse_docx(file_path: Path) -> str:
+        from docx import Document
+        doc = Document(str(file_path))
+        text_parts = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                text_parts.append(text)
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                row_text = " | ".join(c for c in cells if c)
+                if row_text:
+                    text_parts.append(row_text)
+        return "\n\n".join(text_parts)
 
 
 class MarkdownSplitter:
@@ -9,8 +69,9 @@ class MarkdownSplitter:
 
     def split_file(self, file_path: str | Path) -> list[dict]:
         file_path = Path(file_path)
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
+        text = DocumentParser.parse_file(file_path)
+        if text is None:
+            return []
         return self.split_text(text, source_file=file_path.name)
 
     def split_text(self, text: str, source_file: str) -> list[dict]:
@@ -45,6 +106,8 @@ class MarkdownSplitter:
                 current_lines.append(line)
         if current_lines:
             sections.append((current_title, "\n".join(current_lines)))
+        if not sections:
+            sections.append(("Full Text", text))
         return sections
 
     def _split_into_blocks(self, title: str, content: str) -> list[str]:
@@ -76,4 +139,9 @@ class MarkdownSplitter:
         directory = Path(directory)
         if not directory.exists():
             return []
-        return sorted(directory.glob("*.md"))
+        files = []
+        for ext in SUPPORTED_EXTENSIONS:
+            for f in directory.glob(f"*{ext}"):
+                if not f.name.startswith("~$"):
+                    files.append(f)
+        return sorted(files)

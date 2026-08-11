@@ -90,7 +90,8 @@ class FaissStore:
                 self._metadata = json.load(f)
 
     def reset(self) -> None:
-        self.index = faiss.IndexFlatIP(self.dimension) if self.dimension > 0 else None
+        self.index = None
+        self.dimension = 0
         self._metadata = []
 
     def is_loaded(self) -> bool:

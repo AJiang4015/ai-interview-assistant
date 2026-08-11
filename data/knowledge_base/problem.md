@@ -157,3 +157,49 @@ Rerank 做什么	用 Cross-Encoder（交叉编码器）对粗检结果做精排�
 工具使用	通常只用检索工具	                    可以调用多个工具（搜索、计算、代码执行...）
 训练需求	无需训练	                            无需训练（用同样的 LLM）
 典型场景	"HashMap 扩容是什么？"	            "帮我查 HashMap 扩容，写示例代码，再跑测试"
+
+### 你的 RAG 支持哪些文件？
+md, word, pdf
+
+### 文件解析流程是如何的？
+根据不同文件选择不同的文件解析器
+    ↓
+DocumentParser.parse_file(file_path)
+    ├─ .md → _parse_markdown()   # 直接读取
+    ├─ .pdf → _parse_pdf()       # pypdf 逐页提取
+    └─ .docx → _parse_docx()    # python-docx 段落+表格
+    ↓
+对文本进行标题切分
+    ↓
+按段落/滑动窗口划分
+    ↓
+批量向量化
+
+### PDF解析如何实现？
+使用pypdf
+
+### 扫描 PDF 怎么办？
+
+
+### 不同文件解析后怎么进入同一套 RAG？
+保证不同文件经解析后提取内容格式一致。
+
+### 不同文件解析到向量库如何实现？ 遇到了什么问题？
+DocumentParser.parse_file(file_path)
+    ↓
+返回统一格式的纯文本
+    ↓
+MarkdownSplitter.split_file(file_path)
+    ↓
+按标题分段 → 按大小切块
+    ↓
+返回带元数据的 chunks（每个 chunk 包含 source_file）
+    ↓
+EmbeddingService.encode(contents)
+    ↓
+FaissStore.add_vectors(vectors, chunks)
+
+PDF 中文乱码	生成 PDF 时注册系统字体（SimHei）
+Word 临时文件	过滤 ~$ 开头的文件
+加密 PDF 解析失败	捕获异常，记录日志，跳过处理
+FAISS 索引重复	rebuild=True 时先 reset() 清空
