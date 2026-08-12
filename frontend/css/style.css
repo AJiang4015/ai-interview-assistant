@@ -413,43 +413,6 @@ body {
     background: var(--bg-secondary);
 }
 
-.sources-list {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-}
-
-.sources-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-tertiary);
-    margin-bottom: 8px;
-}
-
-.source-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    margin-bottom: 4px;
-}
-
-.source-file {
-    color: var(--accent);
-    font-family: var(--font-mono);
-}
-
-.source-score {
-    color: var(--text-tertiary);
-    font-family: var(--font-mono);
-    margin-left: auto;
-}
-
 /* 操作按钮行 */
 .msg-actions {
     display: flex;

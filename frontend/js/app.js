@@ -363,6 +363,9 @@ function renderMessageElement(role, content, sources = null) {
     // AI 消息追加操作按钮行
     if (role === 'assistant') {
         addActionButtons(msgDiv, content, sources);
+        if (sources && sources.length > 0) {
+            appendSourcesToMessage(msgDiv, sources);
+        }
     }
 
     els.chatMessages.appendChild(msgDiv);
@@ -370,6 +373,7 @@ function renderMessageElement(role, content, sources = null) {
 }
 
 function addActionButtons(msgDiv, content, sources = null) {
+    if (msgDiv.querySelector('.msg-actions')) return;
     const actions = document.createElement('div');
     actions.className = 'msg-actions';
 
@@ -415,33 +419,9 @@ function addActionButtons(msgDiv, content, sources = null) {
         const existing = msgDiv.querySelector('.msg-sources');
         if (existing) {
             existing.style.display = existing.style.display === 'none' ? 'block' : 'none';
-            return;
-        }
-        if (!sources || sources.length === 0) {
+        } else {
             showToast('暂无参考来源');
-            return;
         }
-        // 创建来源面板
-        const sourcesDiv = document.createElement('div');
-        sourcesDiv.className = 'msg-sources';
-        const header = document.createElement('div');
-        header.className = 'msg-sources-header';
-        header.textContent = `参考来源 (${sources.length})`;
-        sourcesDiv.appendChild(header);
-        sources.forEach(s => {
-            const item = document.createElement('div');
-            item.className = 'msg-sources-item';
-            const file = document.createElement('span');
-            file.className = 'msg-sources-item-file';
-            file.textContent = s.file;
-            const score = document.createElement('span');
-            score.className = 'msg-sources-item-score';
-            score.textContent = (s.score || 0).toFixed(3);
-            item.appendChild(file);
-            item.appendChild(score);
-            sourcesDiv.appendChild(item);
-        });
-        msgDiv.insertBefore(sourcesDiv, actions);
     });
 
     actions.appendChild(copyBtn);
@@ -532,7 +512,7 @@ els.questionInput.addEventListener('keydown', (e) => {
     }
 });
 
-els.btnSend.addEventListener('click', sendQuestion);
+els.btnSend.addEventListener('click', () => sendQuestion());
 els.btnNewSession?.addEventListener('click', createSession);
 
 function autoResizeInput() {
