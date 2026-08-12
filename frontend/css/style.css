@@ -358,6 +358,13 @@ body {
     font-weight: 600;
 }
 
+.msg-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .message.assistant .avatar {
     background: var(--accent-glow);
     color: var(--accent);

@@ -142,20 +142,30 @@ function renderSessions() {
             </div>
         `;
     }).join('');
+}
 
-    els.sessionsList.querySelectorAll('.session-item').forEach(item => {
-        const sessionId = item.dataset.sessionId;
-        item.addEventListener('click', (e) => {
-            if (e.target.classList.contains('session-item-delete')) return;
-            switchSession(sessionId);
-        });
-    });
-
-    els.sessionsList.querySelectorAll('.session-item-delete').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+// 事件委托：监听 sessions-list 上的点击事件，避免重复绑定/解绑
+if (els.sessionsList) {
+    els.sessionsList.addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.session-item-delete');
+        if (deleteBtn) {
             e.stopPropagation();
-            deleteSession(btn.dataset.deleteId);
-        });
+            deleteSession(deleteBtn.dataset.deleteId);
+            return;
+        }
+
+        const sessionItem = e.target.closest('.session-item');
+        if (sessionItem) {
+            switchSession(sessionItem.dataset.sessionId);
+            return;
+        }
+
+        const searchResult = e.target.closest('.search-result-item');
+        if (searchResult) {
+            const sessionId = searchResult.dataset.sessionId;
+            if (searchInput) searchInput.value = '';
+            switchSession(sessionId);
+        }
     });
 }
 
@@ -324,12 +334,16 @@ function renderMessages(sessionId) {
         avatar.className = 'avatar';
         avatar.textContent = 'AI';
 
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'msg-body';
+
         const contentDiv = document.createElement('div');
         contentDiv.className = 'msg-content streaming';
         contentDiv.innerHTML = renderMarkdownNoHighlight(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
 
+        bodyDiv.appendChild(contentDiv);
         msgDiv.appendChild(avatar);
-        msgDiv.appendChild(contentDiv);
+        msgDiv.appendChild(bodyDiv);
         els.chatMessages.appendChild(msgDiv);
         els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 
@@ -348,6 +362,9 @@ function renderMessageElement(role, content, sources = null) {
     avatar.className = 'avatar';
     avatar.textContent = role === 'user' ? '我' : 'AI';
 
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'msg-body';
+
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content';
     // AI 消息用 Markdown 渲染，用户消息纯文本
@@ -357,14 +374,15 @@ function renderMessageElement(role, content, sources = null) {
         contentDiv.textContent = content;
     }
 
+    bodyDiv.appendChild(contentDiv);
     msgDiv.appendChild(avatar);
-    msgDiv.appendChild(contentDiv);
+    msgDiv.appendChild(bodyDiv);
 
-    // AI 消息追加操作按钮行
+    // AI 消息追加操作按钮行（追加到 bodyDiv 中，位于内容下方）
     if (role === 'assistant') {
-        addActionButtons(msgDiv, content, sources);
+        addActionButtons(bodyDiv, content, sources);
         if (sources && sources.length > 0) {
-            appendSourcesToMessage(msgDiv, sources);
+            appendSourcesToMessage(bodyDiv, sources);
         }
     }
 
@@ -731,12 +749,12 @@ async function sendQuestion(question, sessionId, regenerate = false) {
                                 doneDiv.innerHTML = renderMarkdown(accumulatedContent);
                                 removeStreamingCursor(doneDiv);
 
-                                // 添加操作按钮
-                                const msgDiv = doneDiv.closest('.message');
-                                if (msgDiv) {
-                                    addActionButtons(msgDiv, accumulatedContent, sourcesData);
+                                // 添加操作按钮到 msg-body 中
+                                const msgBody = doneDiv.closest('.msg-body');
+                                if (msgBody) {
+                                    addActionButtons(msgBody, accumulatedContent, sourcesData);
                                     if (sourcesData && sourcesData.length > 0) {
-                                        appendSourcesToMessage(msgDiv, sourcesData);
+                                        appendSourcesToMessage(msgBody, sourcesData);
                                     }
                                 }
                             }
@@ -808,12 +826,16 @@ function createStreamingMessage() {
     avatar.className = 'avatar';
     avatar.textContent = 'AI';
 
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'msg-body';
+
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content streaming';
     contentDiv.innerHTML = '<span class="streaming-cursor"></span>';
 
+    bodyDiv.appendChild(contentDiv);
     msgDiv.appendChild(avatar);
-    msgDiv.appendChild(contentDiv);
+    msgDiv.appendChild(bodyDiv);
     els.chatMessages.appendChild(msgDiv);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 
@@ -1215,14 +1237,7 @@ function renderSearchResults(results, query) {
         `;
     }).join('');
 
-    els.sessionsList.querySelectorAll('.search-result-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const sessionId = item.dataset.sessionId;
-            searchInput.value = '';
-            switchSession(sessionId);
-        });
-    });
-}
+    }
 
 // ============ Auth Module ============
 
