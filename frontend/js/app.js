@@ -4,7 +4,7 @@ const STORAGE_KEY = 'rag_current_session_id';
 const state = {
     sessionMessages: {},
     pendingStreams: {},
-    isLoading: false,
+    loadingSessions: new Set(),
     currentView: 'chat',
     sessionId: null,
     sessions: []
@@ -169,6 +169,10 @@ async function switchSession(sessionId) {
                         { role: 'system', content: '已切换到新会话，开始提问吧！' }
                     ];
                 }
+            } else {
+                state.sessionMessages[sessionId] = [
+                    { role: 'system', content: '已切换到新会话，开始提问吧！' }
+                ];
             }
         } catch (e) {
             console.error('Failed to load session history:', e);
@@ -182,6 +186,7 @@ async function switchSession(sessionId) {
 
     renderMessages(sessionId);
     updateSessionIndicator();
+    updateSendButtonState();
 }
 
 async function createSession() {
@@ -200,12 +205,15 @@ async function createSession() {
         state.sessionId = newSessionId;
         localStorage.setItem(STORAGE_KEY, newSessionId);
 
+        state.loadingSessions.delete(newSessionId);
+
         els.chatMessages.innerHTML = '';
         appendSystemMessage('已创建新会话，开始提问吧！');
 
         await loadSessions();
         renderSessions();
         updateSessionIndicator();
+        updateSendButtonState();
 
         showToast('新会话已创建', 'success');
     } catch (e) {
@@ -217,6 +225,8 @@ async function createSession() {
 async function deleteSession(sessionId) {
     if (!confirm('确定删除该会话吗？')) return;
 
+    const hasPendingStream = !!state.pendingStreams[sessionId];
+
     try {
         const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
             method: 'DELETE'
@@ -224,19 +234,29 @@ async function deleteSession(sessionId) {
         if (res.ok) {
             state.sessions = state.sessions.filter(s => s.session_id !== sessionId);
 
-            delete state.sessionMessages[sessionId];
-            delete state.pendingStreams[sessionId];
+            if (!hasPendingStream) {
+                delete state.sessionMessages[sessionId];
+                delete state.pendingStreams[sessionId];
+            }
 
             if (state.sessionId === sessionId) {
                 state.sessionId = null;
+                state.loadingSessions.delete(sessionId);
                 localStorage.removeItem(STORAGE_KEY);
                 els.chatMessages.innerHTML = '';
-                appendSystemMessage('会话已删除，点击右上角「+」创建新会话。');
+                appendSystemMessage(
+                    hasPendingStream
+                        ? '会话已删除，正在接收最后的 AI 回复…'
+                        : '会话已删除，点击右上角「+」创建新会话。'
+                );
                 updateSessionIndicator();
-            } else {
-                renderSessions();
+                updateSendButtonState();
             }
-            showToast('会话已删除', 'success');
+
+            renderSessions();
+            showToast(hasPendingStream
+                ? '会话已删除，AI 回复将在后台完成'
+                : '会话已删除', 'success');
         }
     } catch (e) {
         console.error('Failed to delete session:', e);
@@ -292,6 +312,8 @@ function renderMessages(sessionId) {
         msgDiv.appendChild(contentDiv);
         els.chatMessages.appendChild(msgDiv);
         els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+
+        pending.contentDiv = contentDiv;
     }
 }
 
@@ -355,8 +377,24 @@ function escapeHtml(text) {
 }
 
 // ============ Chat ============
+function isSessionLoading(sessionId) {
+    if (!sessionId) return false;
+    return state.loadingSessions.has(sessionId);
+}
+
+function getStreamingContentDiv(sessionId) {
+    const pending = state.pendingStreams[sessionId];
+    return pending ? pending.contentDiv : null;
+}
+
+function updateSendButtonState() {
+    const hasText = els.questionInput.value.trim().length > 0;
+    const locked = state.sessionId ? state.loadingSessions.has(state.sessionId) : false;
+    els.btnSend.disabled = !hasText || locked;
+}
+
 els.questionInput.addEventListener('input', () => {
-    els.btnSend.disabled = els.questionInput.value.trim().length === 0 || state.isLoading;
+    updateSendButtonState();
     autoResizeInput();
 });
 
@@ -378,11 +416,12 @@ function autoResizeInput() {
 
 async function sendQuestion() {
     const question = els.questionInput.value.trim();
-    if (!question || state.isLoading) return;
+    if (!question) return;
 
     const requestSessionId = state.sessionId || '__pending__';
-    state.isLoading = true;
-    els.btnSend.disabled = true;
+    if (state.loadingSessions.has(requestSessionId)) return;
+
+    state.loadingSessions.add(requestSessionId);
 
     const messages = getMessages(requestSessionId);
     messages.push({ role: 'user', content: question, sources: null });
@@ -390,19 +429,13 @@ async function sendQuestion() {
 
     state.pendingStreams[requestSessionId] = {
         accumulatedContent: '',
-        sourcesData: null
+        sourcesData: null,
+        contentDiv: null
     };
     els.questionInput.value = '';
     autoResizeInput();
 
-    const isCurrentSession = state.sessionId === requestSessionId;
-    let assistantMsg = null;
-    let contentDiv = null;
-
-    if (isCurrentSession) {
-        assistantMsg = createStreamingMessage();
-        contentDiv = assistantMsg.querySelector('.msg-content');
-    }
+    updateSendButtonState();
 
     let accumulatedContent = '';
     let sourcesData = null;
@@ -425,23 +458,45 @@ async function sendQuestion() {
                 const errData = JSON.parse(errText);
                 errorMsg = errData.detail || errData.error || `HTTP ${res.status}`;
             } catch {}
-            if (contentDiv) {
-                contentDiv.textContent = `❌ ${errorMsg}`;
-                removeStreamingCursor(contentDiv);
-            }
             showToast(errorMsg, 'error');
-            state.isLoading = false;
-            els.btnSend.disabled = els.questionInput.value.trim().length === 0;
+            state.loadingSessions.delete(requestSessionId);
+            delete state.pendingStreams[requestSessionId];
+            updateSendButtonState();
             return;
+        }
+
+        // 流已建立，现在安全地创建 DOM 元素
+        const isCurrentSession = state.sessionId === requestSessionId;
+        if (isCurrentSession) {
+            renderMessageElement('user', question, null);
+            const assistantMsg = createStreamingMessage();
+            const contentDiv = assistantMsg.querySelector('.msg-content');
+            state.pendingStreams[requestSessionId].contentDiv = contentDiv;
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // 节流更新 DOM 的辅助变量
+        let lastDomUpdate = 0;
+        const DOM_UPDATE_INTERVAL = 50; // ms
+
         while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+            // 为 reader.read() 添加超时保护
+            const readResult = await Promise.race([
+                reader.read(),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('stream_read_timeout')), 120000)
+                )
+            ]);
+            const { done, value } = readResult;
+            if (done) {
+                if (buffer.trim()) {
+                    console.warn('[SSE] stream ended with unprocessed buffer:', buffer.slice(0, 200));
+                }
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
 
@@ -476,6 +531,8 @@ async function sendQuestion() {
                                 state.pendingStreams[data.session_id] =
                                     state.pendingStreams['__pending__'];
                                 delete state.pendingStreams['__pending__'];
+                                state.loadingSessions.delete('__pending__');
+                                state.loadingSessions.add(data.session_id);
                                 state.sessionId = data.session_id;
                                 localStorage.setItem(STORAGE_KEY, data.session_id);
                                 renderSessions();
@@ -495,9 +552,15 @@ async function sendQuestion() {
                             if (state.pendingStreams[finalSessionId]) {
                                 state.pendingStreams[finalSessionId].accumulatedContent = accumulatedContent;
                             }
-                            if (contentDiv) {
-                                contentDiv.textContent = accumulatedContent;
-                                els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                            // 节流更新 DOM：每 50ms 最多更新一次
+                            const now = performance.now();
+                            if (now - lastDomUpdate >= DOM_UPDATE_INTERVAL) {
+                                lastDomUpdate = now;
+                                const tokenDiv = getStreamingContentDiv(finalSessionId);
+                                if (tokenDiv) {
+                                    tokenDiv.textContent = accumulatedContent;
+                                    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                                }
                             }
                             break;
 
@@ -512,7 +575,10 @@ async function sendQuestion() {
                                 sourcesData = data.sources;
                             }
 
-                            if (finalSessionId && state.sessionMessages[finalSessionId]) {
+                            if (finalSessionId) {
+                                if (!state.sessionMessages[finalSessionId]) {
+                                    state.sessionMessages[finalSessionId] = [];
+                                }
                                 state.sessionMessages[finalSessionId].push({
                                     role: 'assistant',
                                     content: accumulatedContent,
@@ -520,14 +586,19 @@ async function sendQuestion() {
                                 });
                             }
 
-                            delete state.pendingStreams[finalSessionId];
+                            const doneDiv = getStreamingContentDiv(finalSessionId);
 
-                            if (contentDiv) {
-                                contentDiv.textContent = accumulatedContent;
+                            delete state.pendingStreams[finalSessionId];
+                            state.loadingSessions.delete(finalSessionId);
+                            state.loadingSessions.delete(requestSessionId);
+                            updateSendButtonState();
+
+                            if (doneDiv) {
+                                doneDiv.textContent = accumulatedContent;
                                 if (sourcesData && sourcesData.length > 0) {
-                                    appendSourcesToMessage(contentDiv, sourcesData);
+                                    appendSourcesToMessage(doneDiv, sourcesData);
                                 }
-                                removeStreamingCursor(contentDiv);
+                                removeStreamingCursor(doneDiv);
                             }
 
                             if (state.sessionId === finalSessionId) {
@@ -540,10 +611,14 @@ async function sendQuestion() {
                             break;
 
                         case 'error':
-                            if (contentDiv) {
-                                contentDiv.textContent = `❌ ${data.message || '未知错误'}`;
-                                removeStreamingCursor(contentDiv);
+                            const errDiv = getStreamingContentDiv(finalSessionId);
+                            if (errDiv) {
+                                errDiv.textContent = `❌ ${data.message || '未知错误'}`;
+                                removeStreamingCursor(errDiv);
                             }
+                            delete state.pendingStreams[finalSessionId];
+                            state.loadingSessions.delete(finalSessionId);
+                            updateSendButtonState();
                             showToast(data.message || '请求失败', 'error');
                             break;
                     }
@@ -553,14 +628,27 @@ async function sendQuestion() {
             }
         }
     } catch (e) {
-        if (contentDiv) {
-            contentDiv.textContent = '❌ 网络错误，请检查后端服务是否启动。';
-            removeStreamingCursor(contentDiv);
+        if (e.message === 'stream_read_timeout') {
+            console.error('[SSE] reader.read() timed out after 120s');
+            showToast('流式响应超时，请重试', 'error');
+        } else {
+            showToast('网络错误', 'error');
         }
-        showToast('网络错误', 'error');
+        const netDiv = getStreamingContentDiv(finalSessionId);
+        if (netDiv) {
+            netDiv.textContent = '❌ 网络错误，请检查后端服务是否启动。';
+            removeStreamingCursor(netDiv);
+        }
+        state.loadingSessions.delete(finalSessionId);
+        updateSendButtonState();
     } finally {
-        state.isLoading = false;
-        els.btnSend.disabled = els.questionInput.value.trim().length === 0;
+        if (finalSessionId) {
+            delete state.pendingStreams[finalSessionId];
+        }
+        state.loadingSessions.delete(finalSessionId);
+        state.loadingSessions.delete(requestSessionId);
+        state.loadingSessions.delete('__pending__');
+        updateSendButtonState();
     }
 }
 

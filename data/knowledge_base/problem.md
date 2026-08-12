@@ -203,3 +203,117 @@ PDF 中文乱码	生成 PDF 时注册系统字体（SimHei）
 Word 临时文件	过滤 ~$ 开头的文件
 加密 PDF 解析失败	捕获异常，记录日志，跳过处理
 FAISS 索引重复	rebuild=True 时先 reset() 清空
+
+
+---
+
+### 会话管理：切换会话后 AI 回复丢失
+
+**问题描述**
+用户在会话 A 发送问题后，立即切换到会话 B。AI 回复完成后，前端未将回复写入会话 A，导致刷新后对话丢失，侧边栏也没有新增记录。
+
+**根因分析**
+1. 全局 `state.messages` 被所有会话共享，切换时被覆盖
+2. `state.sessionId` 在 `sendQuestion` 执行中途被切换，导致 `done` 事件无法定位到正确的会话
+3. 切换会话时调用 `abort()` 中断了后台 SSE 请求
+
+**解决方案**
+- 废弃全局 `state.messages`，改用 `state.sessionMessages = { [sessionId]: Message[] }` 按会话隔离存储
+- 废弃 `state.activeRequestSessionId`，改用 `state.pendingStreams = { [sessionId]: {...} }` 跟踪进行中的流
+- `sendQuestion` 开头捕获 `const requestSessionId = state.sessionId || '__pending__'`，后续所有 SSE 事件都以此 ID 为准
+- `switchSession` 不再调用 `abort()`，让 SSE 请求自然完成，完成后 toast 通知用户
+- `done` 事件无条件写入 `state.sessionMessages[finalSessionId]`，不关心当前激活的是哪个会话
+- 首次提问（无 sessionId）使用 `'__pending__'` 临时 key，收到后端 `session` 事件后迁移到真实 ID
+
+**涉及文件**
+`frontend/js/app.js` — state 结构、sendQuestion、switchSession、renderMessages
+
+
+---
+
+### 会话管理：删除当前会话后自动新建
+
+**问题描述**
+删除当前会话后，系统自动创建了一个新会话。用户希望删除后由自己决定是否新建。
+
+**根因分析**
+`deleteSession` 函数在删除当前会话的分支中无条件调用了 `await createSession()`，违背了用户的预期行为。
+
+**解决方案**
+- 移除 `deleteSession` 中的 `await createSession()` 调用
+- 删除后显示引导文案：「会话已删除，点击右上角「+」创建新会话。」
+- 将 `state.sessionId` 置为 `null`，`localStorage` 清除对应 key
+- 调用 `updateSessionIndicator()` 重置指示器状态
+
+**涉及文件**
+`frontend/js/app.js` — deleteSession 函数
+
+
+---
+
+### 会话管理：删除有进行中流的会话导致数据丢失
+
+**问题描述**
+AI 回复过程中删除当前会话，前端立即清除 `sessionMessages` 和 `pendingStreams`，导致 SSE 流完成后 `done` 事件无法找到消息数组来写入回复。
+
+**根因分析**
+`deleteSession` 在删除会话时无差别地执行 `delete state.sessionMessages[sessionId]` 和 `delete state.pendingStreams[sessionId]`，如果此时有正在进行的 SSE 流，`done` 事件的 `state.sessionMessages[finalSessionId].push(...)` 会因为数组不存在而静默失败。
+
+**解决方案**
+- 在删除前检查 `const hasPendingStream = !!state.pendingStreams[sessionId]`
+- 有进行中流时**不删除** `sessionMessages` 和 `pendingStreams`，保留数据结构让 SSE 流自然完成
+- 删除后若 `hasPendingStream` 为真，显示「会话已删除，正在接收最后的 AI 回复…」提示
+- SSE 流完成后，`done` 事件会将 AI 回复写入保留的数组，用户刷新或切回时可看到完整对话
+
+**涉及文件**
+`frontend/js/app.js` — deleteSession 函数的删除逻辑
+
+
+---
+
+### 会话管理：流式响应切换会话后中断
+
+**问题描述**
+AI 正在流式响应时，切换会话再切回来，流式输出中断，后续 token 不再更新到 UI。
+
+**根因分析**
+1. `sendQuestion` 在 `fetch` 之前就创建了 `contentDiv` 并引用到局部变量
+2. 切换会话时 `els.chatMessages.innerHTML = ''` 清空 DOM，原 `contentDiv` 被销毁
+3. 切回原会话时 `renderMessages` 基于 `sessionMessages` 渲染历史消息，但不含正在流式的 AI 回复
+4. 后续 `token` 事件中 `if (contentDiv)` 判断为 false（局部变量已失效），UI 不再更新
+5. `updateSendButtonState` 中的自动清理逻辑会遍历 `loadingSessions` 删除无 `pendingStreams` 的项，可能在流式处理过程中误删状态
+6. `token` 事件中每个 token 都直接操作 `textContent`，频繁重绘影响性能
+
+**解决方案**
+
+1. **将 DOM 操作延迟到流建立之后**
+   - `sendQuestion` 中先执行 `fetch`，成功后再创建用户消息和 AI 占位消息
+   - 避免在 HTTP 流建立前触发 DOM 重排，消除浏览器 HTTP 栈与渲染管线之间的潜在干扰
+
+2. **移除 `updateSendButtonState` 中的自动清理逻辑**
+   - 删除遍历 `loadingSessions` 清理无 `pendingStreams` 项的代码
+   - 改为纯粹的状态查询：`hasText` + `loadingSessions.has(sessionId)`
+   - 状态清理职责明确归属 `done`/`error`/`finally` 三个出口，避免在按钮状态查询时产生副作用
+
+3. **使用节流批量更新 token DOM**
+   - `token` 事件中引入 `lastDomUpdate` 时间戳，DOM 更新间隔不低于 50ms
+   - `accumulatedContent` 始终更新（保证数据完整），但 `textContent` 赋值和滚动操作被节流
+   - 减少高频 `textContent` 赋值导致的重绘开销
+
+4. **为 `reader.read()` 添加超时保护**
+   - 使用 `Promise.race` 将 `reader.read()` 与 120 秒超时 Promise 竞争
+   - 超时后抛出 `stream_read_timeout` 错误，进入 catch 块清理状态
+   - 防止因网络异常或后端卡死导致的永久挂起
+
+**为什么这么选择**
+
+| 方案 | 选择原因 |
+|------|----------|
+| 延迟 DOM 到 fetch 后 | 根因定位发现 DOM 操作在流建立前执行，浏览器渲染管线与 HTTP 流读取之间存在时序冲突，延迟后问题消失 |
+| 移除自动清理而非修复 | 清理逻辑本身是防御性代码，但放在 `updateSendButtonState`（一个高频调用的纯查询函数）中违反单一职责，正确做法是在状态变更点清理 |
+| 节流而非 requestAnimationFrame | `requestAnimationFrame` 与屏幕刷新率绑定（16ms），而 SSE token 间隔不固定（30-60ms），50ms 节流更贴合实际到达频率，且避免 rAF 在标签页不可见时暂停的问题 |
+| 120 秒超时 | LLM 单次响应通常 10-30 秒，120 秒留足余量，不会误杀正常慢响应，同时防止无限挂起 |
+
+**涉及文件**
+`frontend/js/app.js` — sendQuestion 函数（DOM 延迟、节流、超时保护）、updateSendButtonState 函数（移除自动清理）
+`app/services/rag_service.py` — stream_query 方法（清理调试日志，恢复原始逻辑）
