@@ -57,6 +57,10 @@ class SessionStore:
             logger.info("Redis connection closed")
 
     @property
+    def client(self):
+        return self._client
+
+    @property
     def is_connected(self) -> bool:
         return self._client is not None
 

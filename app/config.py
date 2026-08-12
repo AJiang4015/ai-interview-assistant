@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     session_ttl: int = 3600
     max_history_turns: int = 20
 
+    # RAG pipeline 配置
+    rerank_top_k: int = 5
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    enable_query_rewrite: bool = True
+    enable_hybrid_search: bool = True
+    enable_rerank: bool = True
+    enable_cache: bool = True
+    bm25_index_path: str = "data/bm25_index.pkl"
+    cache_ttl: int = 3600
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
