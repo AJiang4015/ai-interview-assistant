@@ -202,6 +202,11 @@ async function switchSession(sessionId) {
     renderMessages(sessionId);
     updateSessionIndicator();
     updateSendButtonState();
+
+    // 自动切换到聊天视图
+    if (state.currentView !== 'chat') {
+        switchView('chat');
+    }
 }
 
 async function createSession() {
@@ -352,33 +357,97 @@ function renderMessageElement(role, content, sources = null) {
         contentDiv.textContent = content;
     }
 
-    if (sources && sources.length > 0) {
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(contentDiv);
+
+    // AI 消息追加操作按钮行
+    if (role === 'assistant') {
+        addActionButtons(msgDiv, content, sources);
+    }
+
+    els.chatMessages.appendChild(msgDiv);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function addActionButtons(msgDiv, content, sources = null) {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+
+    // 复制按钮
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'msg-action-btn';
+    copyBtn.title = '复制答案';
+    copyBtn.innerHTML = '📋';
+    copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(content);
+        showToast('已复制到剪贴板');
+    });
+
+    // 重新生成按钮
+    const regenerateBtn = document.createElement('button');
+    regenerateBtn.className = 'msg-action-btn';
+    regenerateBtn.title = '重新生成';
+    regenerateBtn.innerHTML = '🔄';
+    regenerateBtn.addEventListener('click', () => {
+        const sessionId = state.sessionId;
+        if (!sessionId) return;
+        const messages = state.sessionMessages[sessionId];
+        if (!messages) return;
+        const userMsgIndex = messages.findLastIndex(m => m.role === 'user');
+        if (userMsgIndex === -1) return;
+        const aiMsgIndex = messages.findLastIndex(m => m.role === 'assistant');
+        if (aiMsgIndex === -1) return;
+        const question = messages[userMsgIndex].content;
+        // 移除旧 AI 消息
+        messages.splice(aiMsgIndex, 1);
+        msgDiv.remove();
+        // 重新发送
+        sendQuestion(question, sessionId, true);
+    });
+
+    // 来源折叠按钮
+    const sourcesToggle = document.createElement('button');
+    sourcesToggle.className = 'msg-action-btn';
+    sourcesToggle.title = '展开/收起来源';
+    const sourcesCount = sources?.length || 0;
+    sourcesToggle.innerHTML = `📎 来源 (${sourcesCount})`;
+    sourcesToggle.addEventListener('click', () => {
+        const existing = msgDiv.querySelector('.msg-sources');
+        if (existing) {
+            existing.style.display = existing.style.display === 'none' ? 'block' : 'none';
+            return;
+        }
+        if (!sources || sources.length === 0) {
+            showToast('暂无参考来源');
+            return;
+        }
+        // 创建来源面板
         const sourcesDiv = document.createElement('div');
-        sourcesDiv.className = 'sources-list';
-        const title = document.createElement('div');
-        title.className = 'sources-title';
-        title.textContent = `参考来源 (${sources.length})`;
-        sourcesDiv.appendChild(title);
+        sourcesDiv.className = 'msg-sources';
+        const header = document.createElement('div');
+        header.className = 'msg-sources-header';
+        header.textContent = `参考来源 (${sources.length})`;
+        sourcesDiv.appendChild(header);
         sources.forEach(s => {
             const item = document.createElement('div');
-            item.className = 'source-item';
+            item.className = 'msg-sources-item';
             const file = document.createElement('span');
-            file.className = 'source-file';
+            file.className = 'msg-sources-item-file';
             file.textContent = s.file;
             const score = document.createElement('span');
-            score.className = 'source-score';
+            score.className = 'msg-sources-item-score';
             score.textContent = (s.score || 0).toFixed(3);
             item.appendChild(file);
             item.appendChild(score);
             sourcesDiv.appendChild(item);
         });
-        contentDiv.appendChild(sourcesDiv);
-    }
+        msgDiv.insertBefore(sourcesDiv, actions);
+    });
 
-    msgDiv.appendChild(avatar);
-    msgDiv.appendChild(contentDiv);
-    els.chatMessages.appendChild(msgDiv);
-    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    actions.appendChild(copyBtn);
+    actions.appendChild(regenerateBtn);
+    actions.appendChild(sourcesToggle);
+    msgDiv.appendChild(actions);
 }
 
 function appendMessage(role, content, sources = null) {
@@ -472,18 +541,26 @@ function autoResizeInput() {
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
-async function sendQuestion() {
-    const question = els.questionInput.value.trim();
-    if (!question) return;
+async function sendQuestion(question, sessionId, regenerate = false) {
+    if (!question) {
+        if (regenerate) return;
+        question = els.questionInput.value.trim();
+        if (!question) return;
+    }
 
-    const requestSessionId = state.sessionId || '__pending__';
+    const requestSessionId = sessionId || state.sessionId || '__pending__';
     if (state.loadingSessions.has(requestSessionId)) return;
 
     state.loadingSessions.add(requestSessionId);
 
-    const messages = getMessages(requestSessionId);
-    messages.push({ role: 'user', content: question, sources: null });
-    state.sessionMessages[requestSessionId] = messages;
+    // 重新生成时不添加用户消息（已存在）
+    if (!regenerate) {
+        const messages = getMessages(requestSessionId);
+        messages.push({ role: 'user', content: question, sources: null });
+        state.sessionMessages[requestSessionId] = messages;
+        els.questionInput.value = '';
+        autoResizeInput();
+    }
 
     state.pendingStreams[requestSessionId] = {
         accumulatedContent: '',
@@ -493,8 +570,6 @@ async function sendQuestion() {
         pendingRender: false,
         rafId: null
     };
-    els.questionInput.value = '';
-    autoResizeInput();
 
     updateSendButtonState();
 
@@ -674,10 +749,16 @@ async function sendQuestion() {
 
                             if (doneDiv) {
                                 doneDiv.innerHTML = renderMarkdown(accumulatedContent);
-                                if (sourcesData && sourcesData.length > 0) {
-                                    appendSourcesToMessage(doneDiv, sourcesData);
-                                }
                                 removeStreamingCursor(doneDiv);
+
+                                // 添加操作按钮
+                                const msgDiv = doneDiv.closest('.message');
+                                if (msgDiv) {
+                                    addActionButtons(msgDiv, accumulatedContent, sourcesData);
+                                    if (sourcesData && sourcesData.length > 0) {
+                                        appendSourcesToMessage(msgDiv, sourcesData);
+                                    }
+                                }
                             }
 
                             if (state.sessionId === finalSessionId) {
@@ -765,29 +846,46 @@ function removeStreamingCursor(contentDiv) {
     contentDiv.classList.remove('streaming');
 }
 
-function appendSourcesToMessage(contentDiv, sources) {
+function appendSourcesToMessage(msgDiv, sources) {
     if (!sources || sources.length === 0) return;
 
+    // 移除已存在的来源面板
+    const existing = msgDiv.querySelector('.msg-sources');
+    if (existing) existing.remove();
+
     const sourcesDiv = document.createElement('div');
-    sourcesDiv.className = 'sources-list';
-    const title = document.createElement('div');
-    title.className = 'sources-title';
-    title.textContent = `参考来源 (${sources.length})`;
-    sourcesDiv.appendChild(title);
+    sourcesDiv.className = 'msg-sources';
+    const header = document.createElement('div');
+    header.className = 'msg-sources-header';
+    header.textContent = `参考来源 (${sources.length})`;
+    sourcesDiv.appendChild(header);
     sources.forEach(s => {
         const item = document.createElement('div');
-        item.className = 'source-item';
+        item.className = 'msg-sources-item';
         const file = document.createElement('span');
-        file.className = 'source-file';
+        file.className = 'msg-sources-item-file';
         file.textContent = s.file;
         const score = document.createElement('span');
-        score.className = 'source-score';
+        score.className = 'msg-sources-item-score';
         score.textContent = (s.score || 0).toFixed(3);
         item.appendChild(file);
         item.appendChild(score);
         sourcesDiv.appendChild(item);
     });
-    contentDiv.appendChild(sourcesDiv);
+
+    // 插入到操作按钮之前
+    const actions = msgDiv.querySelector('.msg-actions');
+    if (actions) {
+        msgDiv.insertBefore(sourcesDiv, actions);
+    } else {
+        msgDiv.appendChild(sourcesDiv);
+    }
+
+    // 更新来源按钮计数
+    const toggleBtn = msgDiv.querySelector('.msg-action-btn[title*="来源"]');
+    if (toggleBtn) {
+        toggleBtn.innerHTML = `📎 来源 (${sources.length})`;
+    }
 }
 
 function appendSystemMessage(text) {

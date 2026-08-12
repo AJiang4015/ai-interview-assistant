@@ -1,0 +1,565 @@
+﻿diff --git a/app/api/routes.py b/app/api/routes.py
+index 387d94f..7dacb3f 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -1,6 +1,9 @@
+ import json
++import os
++from datetime import datetime
++from pathlib import Path
+ 
+-from fastapi import APIRouter, HTTPException, Body, Query
++from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, File
+ from fastapi.responses import StreamingResponse
+ 
+ from app.api.schemas import (
+@@ -10,6 +13,8 @@ from app.api.schemas import (
+     CreateSessionRequest, SessionResponse,
+     SessionListResponse, SessionHistoryResponse,
+     DeleteSessionResponse, ClearSessionsResponse,
++    FileInfo, FileListResponse, FileUploadResponse, FileDeleteResponse,
++    SearchResultItem, SearchResponse,
+ )
+ from app.exceptions import (
+     IndexNotFoundError, EmbeddingAPIError,
+@@ -18,6 +23,7 @@ from app.exceptions import (
+ from app.services.rag_service import RAGService
+ from app.services.index_service import IndexService
+ from app.utils.logger import get_logger
++from app.config import settings
+ 
+ logger = get_logger(__name__)
+ 
+@@ -199,3 +205,171 @@ async def clear_all_sessions(confirm: bool = Query(default=False)):
+     except Exception as e:
+         logger.exception(f"Clear sessions failed: {e}")
+         raise HTTPException(status_code=500, detail=str(e) or "清空会话失败")
++
++
++# ==================== File Management ====================
++
++ALLOWED_EXTENSIONS = {".md", ".pdf", ".docx"}
++MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
++
++
++@router.get("/files", response_model=FileListResponse)
++async def list_files():
++    """列出知识库中的所有文件"""
++    kb_path = settings.kb_path
++    if not kb_path.exists():
++        return FileListResponse(total_files=0, files=[])
++
++    files = []
++    for entry in kb_path.iterdir():
++        if not entry.is_file():
++            continue
++        # 过滤 Word 临时文件
++        if entry.name.startswith("~$"):
++            continue
++        ext = entry.suffix.lower()
++        if ext not in ALLOWED_EXTENSIONS:
++            continue
++        stat = entry.stat()
++        files.append(FileInfo(
++            filename=entry.name,
++            size=stat.st_size,
++            modified_time=datetime.fromtimestamp(stat.st_mtime).isoformat(),
++            file_type=ext.lstrip(".")
++        ))
++
++    return FileListResponse(total_files=len(files), files=files)
++
++
++@router.post("/files/upload", response_model=FileUploadResponse)
++async def upload_file(file: UploadFile = File(...)):
++    """上传文件到知识库，上传后自动重建索引"""
++    # 校验文件扩展名
++    filename = file.filename or ""
++    ext = Path(filename).suffix.lower()
++    if ext not in ALLOWED_EXTENSIONS:
++        raise HTTPException(
++            status_code=400,
++            detail=f"不支持的文件类型: {ext}，仅支持 {', '.join(ALLOWED_EXTENSIONS)}"
++        )
++
++    # 过滤 Word 临时文件
++    if filename.startswith("~$"):
++        raise HTTPException(status_code=400, detail="不支持上传 Word 临时文件")
++
++    kb_path = settings.kb_path
++    kb_path.mkdir(parents=True, exist_ok=True)
++    file_path = kb_path / filename
++
++    # 写入文件
++    content = await file.read()
++    if len(content) > MAX_FILE_SIZE:
++        raise HTTPException(status_code=400, detail=f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)")
++
++    with open(file_path, "wb") as f:
++        f.write(content)
++
++    logger.info(f"File uploaded: {filename} ({len(content)} bytes)")
++
++    # 自动重建索引
++    indexer = _get_indexer()
++    try:
++        result = await indexer.build_index(rebuild=True)
++        return FileUploadResponse(
++            success=True,
++            filename=filename,
++            message=f"文件上传成功，索引已重建",
++            index_rebuilt=True,
++            total_chunks=result.total_chunks
++        )
++    except Exception as e:
++        logger.exception(f"Index rebuild after upload failed: {e}")
++        return FileUploadResponse(
++            success=True,
++            filename=filename,
++            message=f"文件上传成功，但索引重建失败: {e}",
++            index_rebuilt=False
++        )
++
++
++@router.delete("/files/{filename}", response_model=FileDeleteResponse)
++async def delete_file(filename: str):
++    """删除知识库中的指定文件，删除后自动重建索引"""
++    # 防止路径穿越
++    if "/" in filename or "\\" in filename or ".." in filename:
++        raise HTTPException(status_code=400, detail="无效的文件名")
++
++    kb_path = settings.kb_path
++    file_path = kb_path / filename
++
++    if not file_path.exists():
++        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
++
++    try:
++        file_path.unlink()
++        logger.info(f"File deleted: {filename}")
++    except Exception as e:
++        logger.exception(f"Failed to delete file: {e}")
++        raise HTTPException(status_code=500, detail=f"删除文件失败: {e}")
++
++    # 自动重建索引
++    try:
++        indexer = _get_indexer()
++        result = await indexer.build_index(rebuild=True)
++        return FileDeleteResponse(
++            success=True,
++            filename=filename,
++            message=f"文件已删除，索引已重建",
++            index_rebuilt=True,
++            total_chunks=result.total_chunks
++        )
++    except Exception as e:
++        logger.exception(f"Index rebuild after delete failed: {e}")
++        return FileDeleteResponse(
++            success=True,
++            filename=filename,
++            message=f"文件已删除，但索引重建失败: {e}",
++            index_rebuilt=False
++        )
++
++
++# ==================== Search ====================
++
++@router.get("/search", response_model=SearchResponse)
++async def search_messages(q: str = Query(..., min_length=1)):
++    """跨会话搜索历史对话"""
++    from app.main import search_store
++    if search_store is None:
++        raise HTTPException(status_code=503, detail="搜索服务未初始化")
++
++    results = search_store.search(q)
++
++    # 构建带上下文的关键词高亮片段
++    search_results = []
++    for r in results:
++        content = r["content"]
++        lower_content = content.lower()
++        lower_keyword = q.lower()
++        pos = lower_content.find(lower_keyword)
++
++        if pos >= 0:
++            start = max(0, pos - 40)
++            end = min(len(content), pos + len(q) + 40)
++            snippet = content[start:end]
++            if start > 0:
++                snippet = "..." + snippet
++            if end < len(content):
++                snippet = snippet + "..."
++        else:
++            snippet = content[:80] + "..." if len(content) > 80 else content
++
++        search_results.append(SearchResultItem(
++            session_id=r["session_id"],
++            title=r.get("title"),
++            role=r["role"],
++            content=content,
++            content_snippet=snippet,
++            created_at=r.get("created_at")
++        ))
++
++    return SearchResponse(query=q, total=len(search_results), results=search_results)
+diff --git a/frontend/js/app.js b/frontend/js/app.js
+index 13a32cd..904e0db 100644
+--- a/frontend/js/app.js
++++ b/frontend/js/app.js
+@@ -47,6 +47,18 @@ const els = {
+     toast: document.getElementById('toast')
+ };
+ 
++// 文件管理 DOM 元素
++const fileEls = {
++    uploadZone: document.getElementById('upload-zone'),
++    fileInput: document.getElementById('file-input'),
++    uploadProgress: document.getElementById('upload-progress'),
++    progressFill: document.getElementById('upload-progress-fill'),
++    progressText: document.getElementById('upload-progress-text'),
++    fileList: document.getElementById('file-list'),
++    fileCount: document.getElementById('file-count'),
++    btnRefresh: document.getElementById('btn-refresh-files')
++};
++
+ // ============ Navigation ============
+ els.navItems.forEach(item => {
+     item.addEventListener('click', () => {
+@@ -66,6 +78,9 @@ function switchView(view) {
+     if (view === 'index') {
+         loadIndexStatus();
+     }
++    if (view === 'docs') {
++        loadFileList();
++    }
+ }
+ 
+ // ============ Status ============
+@@ -306,7 +321,7 @@ function renderMessages(sessionId) {
+ 
+         const contentDiv = document.createElement('div');
+         contentDiv.className = 'msg-content streaming';
+-        contentDiv.innerHTML = escapeHtml(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
++        contentDiv.innerHTML = renderMarkdownNoHighlight(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
+ 
+         msgDiv.appendChild(avatar);
+         msgDiv.appendChild(contentDiv);
+@@ -327,7 +342,12 @@ function renderMessageElement(role, content, sources = null) {
+ 
+     const contentDiv = document.createElement('div');
+     contentDiv.className = 'msg-content';
+-    contentDiv.textContent = content;
++    // AI 消息用 Markdown 渲染，用户消息纯文本
++    if (role === 'assistant') {
++        contentDiv.innerHTML = renderMarkdown(content);
++    } else {
++        contentDiv.textContent = content;
++    }
+ 
+     if (sources && sources.length > 0) {
+         const sourcesDiv = document.createElement('div');
+@@ -382,6 +402,27 @@ function isSessionLoading(sessionId) {
+     return state.loadingSessions.has(sessionId);
+ }
+ 
++// Markdown 渲染 + 代码语法高亮
++function renderMarkdown(text) {
++    if (!text) return '';
++    // marked 解析 Markdown 为 HTML
++    const html = marked.parse(text, { breaks: true, gfm: true });
++    // highlight.js 高亮所有 <code> 块
++    const wrapper = document.createElement('div');
++    wrapper.innerHTML = DOMPurify.sanitize(html);
++    wrapper.querySelectorAll('pre code').forEach(block => {
++        hljs.highlightElement(block);
++    });
++    return wrapper.innerHTML;
++}
++
++// 流式渲染用：Markdown 格式化 + DOMPurify 消毒，不含代码高亮（性能优化）
++function renderMarkdownNoHighlight(text) {
++    if (!text) return '';
++    const html = marked.parse(text, { breaks: true, gfm: true });
++    return DOMPurify.sanitize(html);
++}
++
+ function getStreamingContentDiv(sessionId) {
+     const pending = state.pendingStreams[sessionId];
+     return pending ? pending.contentDiv : null;
+@@ -552,13 +593,13 @@ async function sendQuestion() {
+                             if (state.pendingStreams[finalSessionId]) {
+                                 state.pendingStreams[finalSessionId].accumulatedContent = accumulatedContent;
+                             }
+-                            // 节流更新 DOM：每 50ms 最多更新一次
++                            // 节流更新 DOM：每 50ms 最多更新一次，用 Markdown 渲染
+                             const now = performance.now();
+                             if (now - lastDomUpdate >= DOM_UPDATE_INTERVAL) {
+                                 lastDomUpdate = now;
+                                 const tokenDiv = getStreamingContentDiv(finalSessionId);
+                                 if (tokenDiv) {
+-                                    tokenDiv.textContent = accumulatedContent;
++                                    tokenDiv.innerHTML = renderMarkdownNoHighlight(accumulatedContent);
+                                     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                                 }
+                             }
+@@ -594,7 +635,7 @@ async function sendQuestion() {
+                             updateSendButtonState();
+ 
+                             if (doneDiv) {
+-                                doneDiv.textContent = accumulatedContent;
++                                doneDiv.innerHTML = renderMarkdown(accumulatedContent);
+                                 if (sourcesData && sourcesData.length > 0) {
+                                     appendSourcesToMessage(doneDiv, sourcesData);
+                                 }
+@@ -814,6 +855,251 @@ function showToast(message, type = 'info') {
+     }, 3000);
+ }
+ 
++// ============ File Management ============
++
++function formatFileSize(bytes) {
++    if (bytes === 0) return '0 B';
++    const k = 1024;
++    const sizes = ['B', 'KB', 'MB', 'GB'];
++    const i = Math.floor(Math.log(bytes) / Math.log(k));
++    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
++}
++
++// 格式化相对时间：ISO 字符串 → "2 小时前"
++function formatRelativeTime(isoStr) {
++    const date = new Date(isoStr);
++    const now = new Date();
++    const diff = (now - date) / 1000;
++    if (diff < 60) return '刚刚';
++    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
++    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
++    if (diff < 2592000) return `${Math.floor(diff / 86400)} 天前`;
++    return date.toLocaleDateString('zh-CN');
++}
++
++function getFileIcon(fileType) {
++    const icons = { md: '📝', pdf: '📄', docx: '📘' };
++    return icons[fileType] || '📄';
++}
++
++async function loadFileList() {
++    if (!fileEls.fileList) return;
++    fileEls.fileList.innerHTML = '<div class="file-list-empty">加载中...</div>';
++
++    try {
++        const res = await fetch(`${API_BASE}/api/files`);
++        if (!res.ok) throw new Error(`HTTP ${res.status}`);
++        const data = await res.json();
++
++        fileEls.fileCount.textContent = data.total_files;
++
++        if (data.files.length === 0) {
++            fileEls.fileList.innerHTML = '<div class="file-list-empty">暂无知识库文件，请上传</div>';
++            return;
++        }
++
++        fileEls.fileList.innerHTML = data.files.map(f => `
++            <div class="file-item">
++                <span class="file-icon">${getFileIcon(f.file_type)}</span>
++                <div class="file-info">
++                    <div class="file-name">${escapeHtml(f.filename)}</div>
++                    <div class="file-meta">${formatFileSize(f.size)} · ${f.file_type.toUpperCase()} · ${formatRelativeTime(f.modified_time)}</div>
++                </div>
++                <span class="file-type-badge">${f.file_type}</span>
++                <button class="btn-delete-file" data-filename="${escapeHtml(f.filename)}" title="删除">×</button>
++            </div>
++        `).join('');
++
++        fileEls.fileList.querySelectorAll('.btn-delete-file').forEach(btn => {
++            btn.addEventListener('click', () => handleFileDelete(btn.dataset.filename));
++        });
++    } catch (e) {
++        console.error('Failed to load file list:', e);
++        fileEls.fileList.innerHTML = '<div class="file-list-empty">加载失败，请检查后端服务</div>';
++    }
++}
++
++function handleFileUpload(files) {
++    if (!files || files.length === 0) return;
++
++    const file = files[0];
++    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
++    if (file.size > MAX_SIZE) {
++        showToast(`文件大小超过限制（${formatFileSize(MAX_SIZE)}），请压缩后重试`, 'error');
++        return;
++    }
++
++    const formData = new FormData();
++    formData.append('file', file);
++
++    fileEls.uploadProgress.style.display = 'flex';
++    fileEls.progressFill.style.width = '0%';
++    fileEls.progressText.textContent = `上传中: ${file.name}`;
++
++    const xhr = new XMLHttpRequest();
++
++    xhr.upload.addEventListener('progress', (e) => {
++        if (e.lengthComputable) {
++            const percent = Math.round((e.loaded / e.total) * 100);
++            fileEls.progressFill.style.width = percent + '%';
++            fileEls.progressText.textContent = `上传中... ${percent}%`;
++        }
++    });
++
++    xhr.addEventListener('load', () => {
++        if (xhr.status >= 200 && xhr.status < 300) {
++            const data = JSON.parse(xhr.responseText);
++            showToast(data.message, 'success');
++            fileEls.progressText.textContent = '索引重建中...';
++            setTimeout(() => {
++                fileEls.uploadProgress.style.display = 'none';
++                loadFileList();
++            }, 1500);
++        } else {
++            let errMsg = '上传失败';
++            try {
++                const errData = JSON.parse(xhr.responseText);
++                errMsg = errData.detail || errMsg;
++            } catch {}
++            showToast(errMsg, 'error');
++            fileEls.uploadProgress.style.display = 'none';
++        }
++    });
++
++    xhr.addEventListener('error', () => {
++        showToast('网络错误，上传失败', 'error');
++        fileEls.uploadProgress.style.display = 'none';
++    });
++
++    xhr.open('POST', `${API_BASE}/api/files/upload`);
++    xhr.send(formData);
++}
++
++async function handleFileDelete(filename) {
++    if (!confirm(`确定删除文件「${filename}」吗？删除后将自动重建索引。`)) return;
++
++    try {
++        const res = await fetch(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, {
++            method: 'DELETE'
++        });
++
++        if (!res.ok) {
++            const err = await res.json();
++            throw new Error(err.detail || `HTTP ${res.status}`);
++        }
++
++        const data = await res.json();
++        showToast(data.message, 'success');
++        loadFileList();
++    } catch (e) {
++        console.error('Delete failed:', e);
++        showToast('删除失败: ' + e.message, 'error');
++    }
++}
++
++// 文件管理事件监听
++if (fileEls.uploadZone) {
++    fileEls.uploadZone.addEventListener('click', () => {
++        fileEls.fileInput.click();
++    });
++
++    fileEls.fileInput.addEventListener('change', (e) => {
++        handleFileUpload(e.target.files);
++        e.target.value = '';
++    });
++
++    fileEls.uploadZone.addEventListener('dragover', (e) => {
++        e.preventDefault();
++        fileEls.uploadZone.classList.add('dragover');
++    });
++
++    fileEls.uploadZone.addEventListener('dragleave', () => {
++        fileEls.uploadZone.classList.remove('dragover');
++    });
++
++    fileEls.uploadZone.addEventListener('drop', (e) => {
++        e.preventDefault();
++        fileEls.uploadZone.classList.remove('dragover');
++        handleFileUpload(e.dataTransfer.files);
++    });
++}
++
++if (fileEls.btnRefresh) {
++    fileEls.btnRefresh.addEventListener('click', loadFileList);
++}
++
++// ============ Session Search ============
++
++const searchInput = document.getElementById('session-search');
++let searchDebounceTimer = null;
++
++if (searchInput) {
++    searchInput.addEventListener('input', () => {
++        clearTimeout(searchDebounceTimer);
++        const query = searchInput.value.trim();
++
++        if (!query) {
++            // 清空搜索，恢复会话列表
++            renderSessions();
++            return;
++        }
++
++        searchDebounceTimer = setTimeout(() => {
++            handleSessionSearch(query);
++        }, 300);
++    });
++}
++
++async function handleSessionSearch(query) {
++    try {
++        const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
++        if (!res.ok) throw new Error(`HTTP ${res.status}`);
++        const data = await res.json();
++        renderSearchResults(data.results, query);
++    } catch (e) {
++        console.error('Search failed:', e);
++        els.sessionsList.innerHTML = '<div class="session-empty">搜索失败</div>';
++    }
++}
++
++function renderSearchResults(results, query) {
++    if (!els.sessionsList) return;
++
++    if (results.length === 0) {
++        els.sessionsList.innerHTML = `<div class="session-empty">未找到包含「${escapeHtml(query)}」的对话</div>`;
++        return;
++    }
++
++    els.sessionsList.innerHTML = results.map(r => {
++        const title = r.title || `会话 ${r.session_id.slice(0, 8)}`;
++        const roleLabel = r.role === 'user' ? '提问' : '回答';
++
++        // 高亮关键词
++        const escapedSnippet = escapeHtml(r.content_snippet);
++        const escapedQuery = escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++        const highlightedSnippet = escapedSnippet.replace(
++            new RegExp(`(${escapedQuery})`, 'gi'),
++            '<mark class="search-highlight">$1</mark>'
++        );
++
++        return `
++            <div class="search-result-item" data-session-id="${r.session_id}">
++                <div class="search-result-title">${escapeHtml(title)}</div>
++                <div class="search-result-snippet">${highlightedSnippet}</div>
++                <div class="search-result-meta">${roleLabel}</div>
++            </div>
++        `;
++    }).join('');
++
++    els.sessionsList.querySelectorAll('.search-result-item').forEach(item => {
++        item.addEventListener('click', () => {
++            const sessionId = item.dataset.sessionId;
++            searchInput.value = '';
++            switchSession(sessionId);
++        });
++    });
++}
++
+ // ============ Auth Module ============
+ 
+ const AUTH_TOKEN_KEY = 'rag_auth_token';
