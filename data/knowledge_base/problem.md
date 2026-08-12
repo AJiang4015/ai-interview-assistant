@@ -317,3 +317,100 @@ AI 正在流式响应时，切换会话再切回来，流式输出中断，后�
 **涉及文件**
 `frontend/js/app.js` — sendQuestion 函数（DOM 延迟、节流、超时保护）、updateSendButtonState 函数（移除自动清理）
 `app/services/rag_service.py` — stream_query 方法（清理调试日志，恢复原始逻辑）
+
+
+---
+
+### 对话搜索：FTS5 中文搜索失败
+
+**问题描述**
+使用 FTS5 全文搜索索引用户对话消息，英文关键词（Redis、MySQL）能正常搜索，但中文关键词（持久化、聚簇）返回 0 结果。
+
+目录结构：
+```
+data/
+  search.db          # SQLite 数据库
+  knowledge_base/    # 文档知识库（FAISS 索引）
+    Java基础.md
+    MySQL.md
+    ...
+```
+
+**根因分析**
+1. FTS5 默认使用 `unicode61` 分词器，对中文按**每个字符**切分为独立 token
+2. 例如"持久化"被切分为 `持` + `久` + `化` 三个独立 token，而不是一个整体 token
+3. 搜索 `持久化` 时，FTS5 将查询词也切分为三个 token，但 `unicode61` 不会记录相邻 token 的位置关系，导致三个 token 各自独立匹配，无法匹配到任意一个完整内容
+4. 因此 `持久化` 找不到，"持久化"找不到包含"持久化机制"的文本
+5. 同理，`聚簇` 找不到包含"聚簇索引"的文本
+6. 英文不受影响，因为 `unicode61` 对英文按空格/标点切词，`Redis` 和 `MySQL` 都是完整 token
+
+**解决方案**
+
+1. **改用 `trigram` 分词器**
+   - 将 `tokenize='unicode61'` 改为 `tokenize='trigram'`
+   - `trigram` 按 3 字节切分，对中文能形成有效的子串匹配
+   - 例如"持久化"的 trigram 包含: `持 久 化`、`持久`、`久化` 等子串
+   - 搜索 `持久化` 时，FTS5 会匹配包含这些 trigram 的文本，正确召回包含"持久化机制"的记录
+   - 英文同样适用，`trigram` 对英文单词也能形成有效的子串匹配
+
+2. **短词降级到 LIKE**
+   - `trigram` 分词器的固有限制：少于 3 字符的词无法形成完整 trigram
+   - 例如 `索引`（2 字符）、`聚簇`（2 字符）在 trigram 中返回 0 结果
+   - 解决方案：在 `search()` 方法中判断 `len(keyword.strip()) < 3`，直接降级到 `LIKE '%keyword%'` 搜索
+   - 3 字符及以上（持久化、ThreadPool）走 FTS5 trigram 搜索，2 字符及以下（索引、聚簇、AI）走 LIKE 降级
+
+3. **修复 SQL 注释问题**
+   - `sqlite3.executescript()` 不支持 `#` 注释，会导致 `unrecognized token: "#"` 错误
+   - 移除 `executescript` 中的 Python 风格注释，改为在 Python 代码中注释
+
+**为什么这么选择**
+
+| 方案 | 选择原因 |
+|------|----------|
+| trigram 而非 unicode61 | `unicode61` 对 CJK 按字切分且无相邻位置信息，导致多字符中文词搜索失效。`trigram` 按 3 字节滑动窗口切分，天然支持中文等多字节字符的模糊匹配 |
+| trigram 而非 ICU | ICU 分词器需要编译 SQLite 时启用 `-DSQLITE_ENABLE_ICU`，Windows 预编译的 Python sqlite3 模块通常不包含。`trigram` 是 SQLite 3.34+（2020 年）内置支持，无需额外依赖 |
+| 短词降级 LIKE 而非 trigram 参数调优 | trigram 要求至少 3 个字符才能形成有效 token，这是算法层面的限制，无法通过参数绕过。LIKE 降级简单可靠，对 2 字符短词来说性能差异可忽略 |
+| 短词阈值 3 而非 4 | 实测验证：3 字符中文词（持久化、AOF、IoC）在 trigram 下能正确召回，2 字符（索引、聚簇）不能，阈值精确设为 3 |
+
+**涉及文件**
+`app/storage/search_store.py` — `_init_db`（FTS5 表定义）、`search`（分词器选择 + 短词降级）
+
+
+---
+
+### 对话搜索：FTS5 索引同步与过期清理
+
+**问题描述**
+FTS5 搜索索引需要与消息表保持同步，且需要清理过期的会话数据。
+
+**根因分析**
+1. FTS5 使用 `content='messages'` 外部内容表模式，数据自动从 messages 表同步，但需要触发器保证 INSERT/DELETE/UPDATE 同步
+2. `clear_all` 只清空 messages 和 sessions 表，未重建 FTS5 内部索引，导致 FTS5 内容与实际数据不一致（`database disk image is malformed`）
+3. 缺少清理过期会话的机制，长期运行下 search.db 会无限增长
+
+**解决方案**
+
+1. **FTS5 触发器自动同步**
+   - 创建 3 个触发器：
+     - `messages_fts_ai`（AFTER INSERT）：写入新消息到 FTS5
+     - `messages_fts_ad`（AFTER DELETE）：从 FTS5 删除消息
+     - `messages_fts_au`（AFTER UPDATE）：先删后插，保持最新
+   - 使 FTS5 内容表与 messages 表完全同步，无需手动维护
+
+2. **`clear_all` 重建 FTS5 索引**
+   - 清空 messages 和 sessions 后，执行 `INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`
+   - 强制 FTS5 重新从 messages 表读取内容，避免索引不一致
+
+3. **`cleanup_expired` 方法**
+   - 接收 `active_session_ids: set[str]` 参数（来自 Redis 中的活跃会话列表）
+   - 删除 `sessions` 和 `messages` 表中不在活跃集合中的记录
+   - 有删除操作时同样执行 FTS5 rebuild
+   - 可在会话过期（Redis TTL）或用户主动清理时调用
+
+4. **启动时数据迁移**
+   - 每次 `_init_db` 末尾检查 FTS5 表是否为空
+   - 如果为空（新建数据库），从 messages 表批量导入现有数据到 FTS5
+   - 保证升级后旧数据也能被搜索
+
+**涉及文件**
+`app/storage/search_store.py` — `_init_db`（触发器 + 迁移）、`clear_all`（FTS5 rebuild）、`cleanup_expired`（新增方法）

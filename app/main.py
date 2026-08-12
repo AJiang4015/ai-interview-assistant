@@ -16,6 +16,7 @@ from app.services.auth_service import AuthService
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
 from app.storage.session_store import SessionStore
+from app.storage.search_store import SearchStore
 from app.storage.user_store import UserStore
 from app.utils.logger import get_logger
 
@@ -28,6 +29,7 @@ llm_client: LLMClient | None = None
 rag_service: RAGService | None = None
 index_service: IndexService | None = None
 session_store: SessionStore | None = None
+search_store: SearchStore | None = None
 user_store: UserStore | None = None
 auth_service: AuthService | None = None
 
@@ -35,7 +37,7 @@ auth_service: AuthService | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global faiss_store, doc_store, embedding_service, llm_client, rag_service
-    global index_service, session_store, user_store, auth_service
+    global index_service, session_store, search_store, user_store, auth_service
 
     logger.info("Initializing services...")
 
@@ -66,8 +68,11 @@ async def lifespan(app: FastAPI):
 
     auth_service = AuthService(user_store)
 
+    # 初始化 SQLite 搜索存储
+    search_store = SearchStore()
+
     index_service = IndexService(faiss_store, doc_store, embedding_service)
-    rag_service = RAGService(faiss_store, embedding_service, llm_client, session_store)
+    rag_service = RAGService(faiss_store, embedding_service, llm_client, session_store, search_store)
 
     idx_path = Path(settings.idx_path)
     if (idx_path / "index.faiss").exists():

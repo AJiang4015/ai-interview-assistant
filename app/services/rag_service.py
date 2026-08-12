@@ -7,6 +7,7 @@ from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
 from app.storage.faiss_store import FaissStore
 from app.storage.session_store import SessionStore
+from app.storage.search_store import SearchStore
 from app.exceptions import IndexNotFoundError
 from app.utils.logger import get_logger
 
@@ -29,11 +30,13 @@ class RAGService:
         embedding: EmbeddingService,
         llm: LLMClient,
         session_store: SessionStore | None = None,
+        search_store: SearchStore | None = None,
     ):
         self.faiss = faiss_store
         self.embedding = embedding
         self.llm = llm
         self.session_store = session_store
+        self.search_store = search_store
         self.top_k = settings.top_k
 
     async def query(
@@ -159,6 +162,8 @@ class RAGService:
         if not session_id and self.session_store and self.session_store.is_connected:
             session_id = str(uuid.uuid4())
             await self.session_store.create_session(session_id)
+            if self.search_store:
+                self.search_store.index_session(session_id)
             logger.info(f"Auto-created session: {session_id}")
         return session_id
 
@@ -198,6 +203,13 @@ class RAGService:
                         ]
                     },
                 )
+                # 同步写入 SQLite 搜索索引
+                if self.search_store:
+                    self.search_store.index_message(session_id, "user", question)
+                    self.search_store.index_message(session_id, "assistant", answer)
+                    # 用用户提问更新会话标题（截断 30 字符，与 Redis 逻辑一致）
+                    title = question[:30] + "..." if len(question) > 30 else question
+                    self.search_store.index_session(session_id, title=title)
                 logger.info(f"Conversation saved to session: {session_id}")
             except Exception as e:
                 logger.error(f"Failed to save conversation: {e}")
@@ -248,7 +260,10 @@ class RAGService:
 
             session_id = str(uuid.uuid4())
 
-        return await self.session_store.create_session(session_id)
+        result = await self.session_store.create_session(session_id)
+        if self.search_store:
+            self.search_store.index_session(session_id)
+        return result
 
     async def get_session_history(self, session_id: str) -> list[dict]:
         """Get conversation history for a session."""
@@ -274,7 +289,10 @@ class RAGService:
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
-        return await self.session_store.delete_session(session_id)
+        result = await self.session_store.delete_session(session_id)
+        if self.search_store:
+            self.search_store.delete_session(session_id)
+        return result
 
     async def list_sessions(self) -> dict:
         """List all active sessions."""
@@ -292,4 +310,7 @@ class RAGService:
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
-        return await self.session_store.clear_all_sessions()
+        result = await self.session_store.clear_all_sessions()
+        if self.search_store:
+            self.search_store.clear_all()
+        return result

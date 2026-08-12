@@ -47,6 +47,18 @@ const els = {
     toast: document.getElementById('toast')
 };
 
+// 文件管理 DOM 元素
+const fileEls = {
+    uploadZone: document.getElementById('upload-zone'),
+    fileInput: document.getElementById('file-input'),
+    uploadProgress: document.getElementById('upload-progress'),
+    progressFill: document.getElementById('upload-progress-fill'),
+    progressText: document.getElementById('upload-progress-text'),
+    fileList: document.getElementById('file-list'),
+    fileCount: document.getElementById('file-count'),
+    btnRefresh: document.getElementById('btn-refresh-files')
+};
+
 // ============ Navigation ============
 els.navItems.forEach(item => {
     item.addEventListener('click', () => {
@@ -65,6 +77,9 @@ function switchView(view) {
     });
     if (view === 'index') {
         loadIndexStatus();
+    }
+    if (view === 'docs') {
+        loadFileList();
     }
 }
 
@@ -306,7 +321,7 @@ function renderMessages(sessionId) {
 
         const contentDiv = document.createElement('div');
         contentDiv.className = 'msg-content streaming';
-        contentDiv.innerHTML = escapeHtml(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
+        contentDiv.innerHTML = renderMarkdownNoHighlight(pending.accumulatedContent) || '<span class="streaming-cursor"></span>';
 
         msgDiv.appendChild(avatar);
         msgDiv.appendChild(contentDiv);
@@ -314,6 +329,9 @@ function renderMessages(sessionId) {
         els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 
         pending.contentDiv = contentDiv;
+        pending.lastRenderedLength = pending.accumulatedContent.length;
+        pending.pendingRender = false;
+        pending.rafId = null;
     }
 }
 
@@ -327,7 +345,12 @@ function renderMessageElement(role, content, sources = null) {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content';
-    contentDiv.textContent = content;
+    // AI 消息用 Markdown 渲染，用户消息纯文本
+    if (role === 'assistant') {
+        contentDiv.innerHTML = renderMarkdown(content);
+    } else {
+        contentDiv.textContent = content;
+    }
 
     if (sources && sources.length > 0) {
         const sourcesDiv = document.createElement('div');
@@ -376,10 +399,45 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// DOMPurify 白名单配置：只允许 Markdown 渲染产生的 HTML 标签和属性
+const DOMPurifyConfig = {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 's', 'del', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'img', 'span', 'div', 'input'],
+    ALLOWED_ATTR: ['href', 'title', 'target', 'src', 'alt', 'class', 'type', 'checked', 'disabled']
+};
+
 // ============ Chat ============
 function isSessionLoading(sessionId) {
     if (!sessionId) return false;
     return state.loadingSessions.has(sessionId);
+}
+
+// Markdown 渲染 + 代码语法高亮
+function renderMarkdown(text) {
+    if (!text) return '';
+    // marked 未加载时降级为纯文本
+    if (typeof marked === 'undefined') {
+        return `<p>${escapeHtml(text)}</p>`;
+    }
+    // marked 解析 Markdown 为 HTML
+    const html = marked.parse(text, { breaks: true, gfm: true });
+    // highlight.js 高亮所有 <code> 块
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = DOMPurify.sanitize(html, DOMPurifyConfig);
+    wrapper.querySelectorAll('pre code').forEach(block => {
+        hljs.highlightElement(block);
+    });
+    return wrapper.innerHTML;
+}
+
+// 流式渲染用：Markdown 格式化 + DOMPurify 消毒，不含代码高亮（性能优化）
+function renderMarkdownNoHighlight(text) {
+    if (!text) return '';
+    // marked 未加载时降级为纯文本
+    if (typeof marked === 'undefined') {
+        return `<p>${escapeHtml(text)}</p>`;
+    }
+    const html = marked.parse(text, { breaks: true, gfm: true });
+    return DOMPurify.sanitize(html, DOMPurifyConfig);
 }
 
 function getStreamingContentDiv(sessionId) {
@@ -430,7 +488,10 @@ async function sendQuestion() {
     state.pendingStreams[requestSessionId] = {
         accumulatedContent: '',
         sourcesData: null,
-        contentDiv: null
+        contentDiv: null,
+        lastRenderedLength: 0,
+        pendingRender: false,
+        rafId: null
     };
     els.questionInput.value = '';
     autoResizeInput();
@@ -477,10 +538,6 @@ async function sendQuestion() {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-
-        // 节流更新 DOM 的辅助变量
-        let lastDomUpdate = 0;
-        const DOM_UPDATE_INTERVAL = 50; // ms
 
         while (true) {
             // 为 reader.read() 添加超时保护
@@ -549,17 +606,33 @@ async function sendQuestion() {
 
                         case 'token':
                             accumulatedContent += data.content;
-                            if (state.pendingStreams[finalSessionId]) {
-                                state.pendingStreams[finalSessionId].accumulatedContent = accumulatedContent;
-                            }
-                            // 节流更新 DOM：每 50ms 最多更新一次
-                            const now = performance.now();
-                            if (now - lastDomUpdate >= DOM_UPDATE_INTERVAL) {
-                                lastDomUpdate = now;
-                                const tokenDiv = getStreamingContentDiv(finalSessionId);
-                                if (tokenDiv) {
-                                    tokenDiv.textContent = accumulatedContent;
-                                    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                            const tokenStream = state.pendingStreams[finalSessionId];
+                            if (tokenStream) {
+                                tokenStream.accumulatedContent = accumulatedContent;
+                                if (!tokenStream.pendingRender) {
+                                    tokenStream.pendingRender = true;
+                                    tokenStream.rafId = requestAnimationFrame(() => {
+                                        tokenStream.pendingRender = false;
+                                        tokenStream.rafId = null;
+                                        const tokenDiv = tokenStream.contentDiv;
+                                        if (!tokenDiv) return;
+
+                                        const delta = accumulatedContent.slice(tokenStream.lastRenderedLength);
+                                        if (!delta) return;
+
+                                        const lastDoubleNewline = delta.lastIndexOf('\n\n');
+                                        if (lastDoubleNewline === -1) {
+                                            // 无安全断点，等待下一次 tick
+                                            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                                            return;
+                                        }
+
+                                        const safeChunk = delta.slice(0, lastDoubleNewline + 2);
+                                        const rendered = renderMarkdownNoHighlight(safeChunk);
+                                        tokenDiv.insertAdjacentHTML('beforeend', rendered);
+                                        tokenStream.lastRenderedLength += safeChunk.length;
+                                        els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+                                    });
                                 }
                             }
                             break;
@@ -586,7 +659,13 @@ async function sendQuestion() {
                                 });
                             }
 
-                            const doneDiv = getStreamingContentDiv(finalSessionId);
+                            const doneStream = state.pendingStreams[finalSessionId];
+                            const doneDiv = doneStream ? doneStream.contentDiv : null;
+
+                            // 取消待处理的增量渲染回调
+                            if (doneStream && doneStream.rafId) {
+                                cancelAnimationFrame(doneStream.rafId);
+                            }
 
                             delete state.pendingStreams[finalSessionId];
                             state.loadingSessions.delete(finalSessionId);
@@ -594,7 +673,7 @@ async function sendQuestion() {
                             updateSendButtonState();
 
                             if (doneDiv) {
-                                doneDiv.textContent = accumulatedContent;
+                                doneDiv.innerHTML = renderMarkdown(accumulatedContent);
                                 if (sourcesData && sourcesData.length > 0) {
                                     appendSourcesToMessage(doneDiv, sourcesData);
                                 }
@@ -611,7 +690,11 @@ async function sendQuestion() {
                             break;
 
                         case 'error':
-                            const errDiv = getStreamingContentDiv(finalSessionId);
+                            const errStream = state.pendingStreams[finalSessionId];
+                            if (errStream && errStream.rafId) {
+                                cancelAnimationFrame(errStream.rafId);
+                            }
+                            const errDiv = errStream ? errStream.contentDiv : null;
                             if (errDiv) {
                                 errDiv.textContent = `❌ ${data.message || '未知错误'}`;
                                 removeStreamingCursor(errDiv);
@@ -643,6 +726,10 @@ async function sendQuestion() {
         updateSendButtonState();
     } finally {
         if (finalSessionId) {
+            const finalStream = state.pendingStreams[finalSessionId];
+            if (finalStream && finalStream.rafId) {
+                cancelAnimationFrame(finalStream.rafId);
+            }
             delete state.pendingStreams[finalSessionId];
         }
         state.loadingSessions.delete(finalSessionId);
@@ -709,7 +796,7 @@ function appendSystemMessage(text) {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content';
-    contentDiv.innerHTML = `<p>${text}</p>`;
+    contentDiv.innerHTML = `<p>${escapeHtml(text)}</p>`;
 
     msgDiv.appendChild(contentDiv);
     els.chatMessages.appendChild(msgDiv);
@@ -812,6 +899,251 @@ function showToast(message, type = 'info') {
     setTimeout(() => {
         els.toast.className = 'toast';
     }, 3000);
+}
+
+// ============ File Management ============
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// 格式化相对时间：ISO 字符串 → "2 小时前"
+function formatRelativeTime(isoStr) {
+    const date = new Date(isoStr);
+    const now = new Date();
+    const diff = (now - date) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+    if (diff < 2592000) return `${Math.floor(diff / 86400)} 天前`;
+    return date.toLocaleDateString('zh-CN');
+}
+
+function getFileIcon(fileType) {
+    const icons = { md: '📝', pdf: '📄', docx: '📘' };
+    return icons[fileType] || '📄';
+}
+
+async function loadFileList() {
+    if (!fileEls.fileList) return;
+    fileEls.fileList.innerHTML = '<div class="file-list-empty">加载中...</div>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/files`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        fileEls.fileCount.textContent = data.total_files;
+
+        if (data.files.length === 0) {
+            fileEls.fileList.innerHTML = '<div class="file-list-empty">暂无知识库文件，请上传</div>';
+            return;
+        }
+
+        fileEls.fileList.innerHTML = data.files.map(f => `
+            <div class="file-item">
+                <span class="file-icon">${getFileIcon(f.file_type)}</span>
+                <div class="file-info">
+                    <div class="file-name">${escapeHtml(f.filename)}</div>
+                    <div class="file-meta">${formatFileSize(f.size)} · ${f.file_type.toUpperCase()} · ${formatRelativeTime(f.modified_time)}</div>
+                </div>
+                <span class="file-type-badge">${f.file_type}</span>
+                <button class="btn-delete-file" data-filename="${escapeHtml(f.filename)}" title="删除">×</button>
+            </div>
+        `).join('');
+
+        fileEls.fileList.querySelectorAll('.btn-delete-file').forEach(btn => {
+            btn.addEventListener('click', () => handleFileDelete(btn.dataset.filename));
+        });
+    } catch (e) {
+        console.error('Failed to load file list:', e);
+        fileEls.fileList.innerHTML = '<div class="file-list-empty">加载失败，请检查后端服务</div>';
+    }
+}
+
+function handleFileUpload(files) {
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+    if (file.size > MAX_SIZE) {
+        showToast(`文件大小超过限制（${formatFileSize(MAX_SIZE)}），请压缩后重试`, 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fileEls.uploadProgress.style.display = 'flex';
+    fileEls.progressFill.style.width = '0%';
+    fileEls.progressText.textContent = `上传中: ${file.name}`;
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            fileEls.progressFill.style.width = percent + '%';
+            fileEls.progressText.textContent = `上传中... ${percent}%`;
+        }
+    });
+
+    xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            const data = JSON.parse(xhr.responseText);
+            showToast(data.message, 'success');
+            fileEls.progressText.textContent = '索引重建中...';
+            setTimeout(() => {
+                fileEls.uploadProgress.style.display = 'none';
+                loadFileList();
+            }, 1500);
+        } else {
+            let errMsg = '上传失败';
+            try {
+                const errData = JSON.parse(xhr.responseText);
+                errMsg = errData.detail || errMsg;
+            } catch {}
+            showToast(errMsg, 'error');
+            fileEls.uploadProgress.style.display = 'none';
+        }
+    });
+
+    xhr.addEventListener('error', () => {
+        showToast('网络错误，上传失败', 'error');
+        fileEls.uploadProgress.style.display = 'none';
+    });
+
+    xhr.open('POST', `${API_BASE}/api/files/upload`);
+    xhr.send(formData);
+}
+
+async function handleFileDelete(filename) {
+    if (!confirm(`确定删除文件「${filename}」吗？删除后将自动重建索引。`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, {
+            method: 'DELETE'
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        showToast(data.message, 'success');
+        loadFileList();
+    } catch (e) {
+        console.error('Delete failed:', e);
+        showToast('删除失败: ' + e.message, 'error');
+    }
+}
+
+// 文件管理事件监听
+if (fileEls.uploadZone) {
+    fileEls.uploadZone.addEventListener('click', () => {
+        fileEls.fileInput.click();
+    });
+
+    fileEls.fileInput.addEventListener('change', (e) => {
+        handleFileUpload(e.target.files);
+        e.target.value = '';
+    });
+
+    fileEls.uploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileEls.uploadZone.classList.add('dragover');
+    });
+
+    fileEls.uploadZone.addEventListener('dragleave', () => {
+        fileEls.uploadZone.classList.remove('dragover');
+    });
+
+    fileEls.uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileEls.uploadZone.classList.remove('dragover');
+        handleFileUpload(e.dataTransfer.files);
+    });
+}
+
+if (fileEls.btnRefresh) {
+    fileEls.btnRefresh.addEventListener('click', loadFileList);
+}
+
+// ============ Session Search ============
+
+const searchInput = document.getElementById('session-search');
+let searchDebounceTimer = null;
+
+if (searchInput) {
+    searchInput.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        const query = searchInput.value.trim();
+
+        if (!query) {
+            // 清空搜索，恢复会话列表
+            renderSessions();
+            return;
+        }
+
+        searchDebounceTimer = setTimeout(() => {
+            handleSessionSearch(query);
+        }, 300);
+    });
+}
+
+async function handleSessionSearch(query) {
+    try {
+        const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderSearchResults(data.results, query);
+    } catch (e) {
+        console.error('Search failed:', e);
+        els.sessionsList.innerHTML = '<div class="session-empty">搜索失败</div>';
+    }
+}
+
+function renderSearchResults(results, query) {
+    if (!els.sessionsList) return;
+
+    if (results.length === 0) {
+        els.sessionsList.innerHTML = `<div class="session-empty">未找到包含「${escapeHtml(query)}」的对话</div>`;
+        return;
+    }
+
+    els.sessionsList.innerHTML = results.map(r => {
+        const title = r.title || `会话 ${r.session_id.slice(0, 8)}`;
+        const roleLabel = r.role === 'user' ? '提问' : '回答';
+
+        // 高亮关键词
+        const escapedSnippet = escapeHtml(r.content_snippet);
+        const escapedQuery = escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const highlightedSnippet = escapedSnippet.replace(
+            new RegExp(`(${escapedQuery})`, 'gi'),
+            '<mark class="search-highlight">$1</mark>'
+        );
+
+        return `
+            <div class="search-result-item" data-session-id="${r.session_id}">
+                <div class="search-result-title">${escapeHtml(title)}</div>
+                <div class="search-result-snippet">${highlightedSnippet}</div>
+                <div class="search-result-meta">${roleLabel}</div>
+            </div>
+        `;
+    }).join('');
+
+    els.sessionsList.querySelectorAll('.search-result-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const sessionId = item.dataset.sessionId;
+            searchInput.value = '';
+            switchSession(sessionId);
+        });
+    });
 }
 
 // ============ Auth Module ============

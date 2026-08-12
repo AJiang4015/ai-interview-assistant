@@ -1,6 +1,10 @@
+import asyncio
 import json
+import os
+from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Body, Query
+from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 from app.api.schemas import (
@@ -10,6 +14,8 @@ from app.api.schemas import (
     CreateSessionRequest, SessionResponse,
     SessionListResponse, SessionHistoryResponse,
     DeleteSessionResponse, ClearSessionsResponse,
+    FileInfo, FileListResponse, FileUploadResponse, FileDeleteResponse,
+    SearchResultItem, SearchResponse,
 )
 from app.exceptions import (
     IndexNotFoundError, EmbeddingAPIError,
@@ -18,6 +24,7 @@ from app.exceptions import (
 from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
 from app.utils.logger import get_logger
+from app.config import settings
 
 logger = get_logger(__name__)
 
@@ -36,6 +43,16 @@ def _get_indexer() -> IndexService:
     if index_service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
     return index_service
+
+
+async def _rebuild_index_async():
+    """后台异步重建索引，不阻塞响应"""
+    try:
+        indexer = _get_indexer()
+        result = await indexer.build_index(rebuild=True)
+        logger.info(f"Background index rebuild completed: {result.total_chunks} chunks, {result.files_processed} files")
+    except Exception as e:
+        logger.exception(f"Background index rebuild failed: {e}")
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -199,3 +216,149 @@ async def clear_all_sessions(confirm: bool = Query(default=False)):
     except Exception as e:
         logger.exception(f"Clear sessions failed: {e}")
         raise HTTPException(status_code=500, detail=str(e) or "清空会话失败")
+
+
+# ==================== File Management ====================
+
+ALLOWED_EXTENSIONS = {".md", ".pdf", ".docx"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+
+@router.get("/files", response_model=FileListResponse)
+async def list_files():
+    """列出知识库中的所有文件"""
+    kb_path = settings.kb_path
+    if not kb_path.exists():
+        return FileListResponse(total_files=0, files=[])
+
+    files = []
+    for entry in kb_path.iterdir():
+        if not entry.is_file():
+            continue
+        # 过滤 Word 临时文件
+        if entry.name.startswith("~$"):
+            continue
+        ext = entry.suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            continue
+        stat = entry.stat()
+        files.append(FileInfo(
+            filename=entry.name,
+            size=stat.st_size,
+            modified_time=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            file_type=ext.lstrip(".")
+        ))
+
+    return FileListResponse(total_files=len(files), files=files)
+
+
+@router.post("/files/upload", response_model=FileUploadResponse)
+async def upload_file(file: UploadFile = File(...)):
+    """上传文件到知识库，上传后自动重建索引"""
+    # 校验文件扩展名
+    filename = file.filename or ""
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型: {ext}，仅支持 {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+
+    # 过滤 Word 临时文件
+    if filename.startswith("~$"):
+        raise HTTPException(status_code=400, detail="不支持上传 Word 临时文件")
+
+    kb_path = settings.kb_path
+    kb_path.mkdir(parents=True, exist_ok=True)
+    file_path = kb_path / filename
+
+    # 写入文件
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)")
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    logger.info(f"File uploaded: {filename} ({len(content)} bytes)")
+
+    # 后台异步重建索引
+    asyncio.create_task(_rebuild_index_async())
+    return FileUploadResponse(
+        success=True,
+        filename=filename,
+        message="文件上传成功，索引正在后台重建...",
+        index_rebuilt=False
+    )
+
+
+@router.delete("/files/{filename}", response_model=FileDeleteResponse)
+async def delete_file(filename: str):
+    """删除知识库中的指定文件，删除后自动重建索引"""
+    # 防止路径穿越
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="无效的文件名")
+
+    kb_path = settings.kb_path
+    file_path = kb_path / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+
+    try:
+        file_path.unlink()
+        logger.info(f"File deleted: {filename}")
+    except Exception as e:
+        logger.exception(f"Failed to delete file: {e}")
+        raise HTTPException(status_code=500, detail=f"删除文件失败: {e}")
+
+    # 后台异步重建索引
+    asyncio.create_task(_rebuild_index_async())
+    return FileDeleteResponse(
+        success=True,
+        filename=filename,
+        message="文件已删除，索引正在后台重建...",
+        index_rebuilt=False
+    )
+
+
+# ==================== Search ====================
+
+@router.get("/search", response_model=SearchResponse)
+async def search_messages(q: str = Query(..., min_length=1)):
+    """跨会话搜索历史对话"""
+    from app.main import search_store
+    if search_store is None:
+        raise HTTPException(status_code=503, detail="搜索服务未初始化")
+
+    results = search_store.search(q)
+
+    # 构建带上下文的关键词高亮片段
+    search_results = []
+    for r in results:
+        content = r["content"]
+        lower_content = content.lower()
+        lower_keyword = q.lower()
+        pos = lower_content.find(lower_keyword)
+
+        if pos >= 0:
+            start = max(0, pos - 40)
+            end = min(len(content), pos + len(q) + 40)
+            snippet = content[start:end]
+            if start > 0:
+                snippet = "..." + snippet
+            if end < len(content):
+                snippet = snippet + "..."
+        else:
+            snippet = content[:80] + "..." if len(content) > 80 else content
+
+        search_results.append(SearchResultItem(
+            session_id=r["session_id"],
+            title=r.get("title"),
+            role=r["role"],
+            content=content,
+            content_snippet=snippet,
+            created_at=r.get("created_at")
+        ))
+
+    return SearchResponse(query=q, total=len(search_results), results=search_results)

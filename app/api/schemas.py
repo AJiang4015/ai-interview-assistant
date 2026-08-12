@@ -109,3 +109,50 @@ class UserResponse(BaseModel):
     username: str
     display_name: str
     created_at: str | None = None
+
+
+# ==================== File Management Schemas ====================
+
+class FileInfo(BaseModel):
+    filename: str
+    size: int
+    modified_time: str
+    file_type: str
+
+
+class FileListResponse(BaseModel):
+    total_files: int
+    files: list[FileInfo]
+
+
+class FileUploadResponse(BaseModel):
+    success: bool
+    filename: str
+    message: str
+    index_rebuilt: bool = False
+    total_chunks: int = 0
+
+
+class FileDeleteResponse(BaseModel):
+    success: bool
+    filename: str
+    message: str
+    index_rebuilt: bool = False
+    total_chunks: int = 0
+
+
+# ==================== Search Schemas ====================
+
+class SearchResultItem(BaseModel):
+    session_id: str
+    title: str | None = None
+    role: str
+    content: str
+    content_snippet: str
+    created_at: str | None = None
+
+
+class SearchResponse(BaseModel):
+    query: str
+    total: int
+    results: list[SearchResultItem]
