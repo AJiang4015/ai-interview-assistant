@@ -31,12 +31,20 @@ class RAGService:
         llm: LLMClient,
         session_store: SessionStore | None = None,
         search_store: SearchStore | None = None,
+        query_rewriter=None,      # QueryRewriteService | None
+        hybrid_retriever=None,    # HybridRetriever | None
+        reranker=None,            # RerankService | None
+        cache_service=None,       # ResponseCache | None
     ):
         self.faiss = faiss_store
         self.embedding = embedding
         self.llm = llm
         self.session_store = session_store
         self.search_store = search_store
+        self.query_rewriter = query_rewriter
+        self.hybrid_retriever = hybrid_retriever
+        self.reranker = reranker
+        self.cache = cache_service
         self.top_k = settings.top_k
 
     async def query(
@@ -44,45 +52,53 @@ class RAGService:
     ) -> QueryResponse:
         if not self.faiss.is_loaded():
             raise IndexNotFoundError("索引未构建，请先调用 /api/index/build")
-
         logger.info(f"Processing query: {question[:50]}... (session: {session_id})")
-
         session_id = await self._ensure_session(session_id)
 
-        query_vector = await self.embedding.encode([question])
-        if query_vector.size == 0:
-            raise ValueError("Failed to encode question")
+        # 1. 查询改写
+        retrieval_query = question
+        if self.query_rewriter and self.query_rewriter.enabled:
+            retrieval_query = await self.query_rewriter.rewrite(question)
 
-        results = self.faiss.search(query_vector[0], self.top_k)
-        if not results:
-            logger.warning("No relevant chunks found")
+        # 2. 混合检索
+        if self.hybrid_retriever and self.hybrid_retriever.enabled:
+            raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
+        else:
+            query_vector = await self.embedding.encode([retrieval_query])
+            if query_vector.size == 0:
+                raise ValueError("Failed to encode question")
+            raw_results = self.faiss.search(query_vector[0], self.top_k)
+
+        if not raw_results:
             return QueryResponse(
                 answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
-                sources=[],
-                retrieved_chunks=[],
-                session_id=session_id,
+                sources=[], retrieved_chunks=[], session_id=session_id,
             )
 
-        unique_results = self._deduplicate_results(results)
+        # 3. 重排序
+        if self.reranker and self.reranker.enabled:
+            docs = [r.content for r in raw_results]
+            reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
+            content_to_result = {r.content: r for r in raw_results}
+            final_results = []
+            for rr in reranked:
+                if rr.content in content_to_result:
+                    final_results.append(content_to_result[rr.content])
+        else:
+            final_results = raw_results[:self.top_k]
+
+        unique_results = self._deduplicate_results(final_results)
         context = "\n---\n".join([r.content for r in unique_results])
         prompt = await self._build_prompt(session_id, question, context)
-
         answer = await self.llm.chat(prompt, SYSTEM_PROMPT)
-
         await self._save_to_session(session_id, question, answer, unique_results)
 
         sources = [
-            SourceInfo(
-                file=r.source_file,
-                chunk_index=r.chunk_index,
-                score=r.score,
-            )
+            SourceInfo(file=r.source_file, chunk_index=r.chunk_index, score=r.score)
             for r in unique_results
         ]
-
         return QueryResponse(
-            answer=answer,
-            sources=sources,
+            answer=answer, sources=sources,
             retrieved_chunks=[r.content for r in unique_results],
             session_id=session_id,
         )
@@ -90,28 +106,50 @@ class RAGService:
     async def stream_query(
         self, question: str, session_id: str | None = None
     ):
-        """Stream query results via SSE events."""
         if not self.faiss.is_loaded():
             raise IndexNotFoundError("索引未构建，请先调用 /api/index/build")
 
         logger.info(f"Processing stream query: {question[:50]}... (session: {session_id})")
-
         session_id = await self._ensure_session(session_id)
-
         yield self._sse_event("session", {"session_id": session_id})
 
-        query_vector = await self.embedding.encode([question])
-        if query_vector.size == 0:
-            yield self._sse_event("error", {"message": "Failed to encode question"})
-            return
+        # 1. 查询改写
+        retrieval_query = question
+        if self.query_rewriter and self.query_rewriter.enabled:
+            retrieval_query = await self.query_rewriter.rewrite(question)
+            logger.info(f"Rewritten query: '{question[:30]}' -> '{retrieval_query[:50]}'")
 
-        results = self.faiss.search(query_vector[0], self.top_k)
-        if not results:
+        # 2. 检查缓存
+        if self.cache and self.cache.available:
+            msg_count = await self._get_message_count(session_id)
+            cache_key = self.cache.make_key(question, session_id, msg_count)
+            cached = await self.cache.get(cache_key)
+            if cached:
+                logger.info(f"Cache hit for session {session_id}")
+                yield self._sse_event("retrieval", {
+                    "sources": cached["sources"],
+                    "chunks": [],
+                })
+                yield self._sse_event("done", {
+                    "answer": cached["answer"],
+                    "sources": cached["sources"],
+                    "session_id": session_id,
+                })
+                return
+
+        # 3. 混合检索
+        if self.hybrid_retriever and self.hybrid_retriever.enabled:
+            raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
+        else:
+            query_vector = await self.embedding.encode([retrieval_query])
+            if query_vector.size == 0:
+                yield self._sse_event("error", {"message": "Failed to encode question"})
+                return
+            raw_results = self.faiss.search(query_vector[0], self.top_k)
+
+        if not raw_results:
             logger.warning("No relevant chunks found")
-            yield self._sse_event("retrieval", {
-                "sources": [],
-                "chunks": [],
-            })
+            yield self._sse_event("retrieval", {"sources": [], "chunks": []})
             yield self._sse_event("done", {
                 "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
                 "sources": [],
@@ -119,7 +157,21 @@ class RAGService:
             })
             return
 
-        unique_results = self._deduplicate_results(results)
+        # 4. 重排序
+        if self.reranker and self.reranker.enabled:
+            docs = [r.content for r in raw_results]
+            reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
+            # 用重排序结果替换原始结果
+            final_results = []
+            content_to_result = {r.content: r for r in raw_results}
+            for rr in reranked:
+                if rr.content in content_to_result:
+                    orig = content_to_result[rr.content]
+                    final_results.append(orig)
+        else:
+            final_results = raw_results[:self.top_k]
+
+        unique_results = self._deduplicate_results(final_results)
 
         sources_data = [
             {"file": r.source_file, "chunk_index": r.chunk_index, "score": r.score}
@@ -130,6 +182,7 @@ class RAGService:
             "chunks": [r.content for r in unique_results],
         })
 
+        # 5. LLM 生成
         context = "\n---\n".join([r.content for r in unique_results])
         prompt = await self._build_prompt(session_id, question, context)
 
@@ -146,6 +199,12 @@ class RAGService:
         answer = "".join(answer_parts)
 
         await self._save_to_session(session_id, question, answer, unique_results)
+
+        # 6. 写入缓存
+        if self.cache and self.cache.available:
+            msg_count = await self._get_message_count(session_id)
+            cache_key = self.cache.make_key(question, session_id, msg_count)
+            await self.cache.set(cache_key, answer, sources_data)
 
         yield self._sse_event("done", {
             "answer": answer,
@@ -176,6 +235,16 @@ class RAGService:
                 seen_contents.add(r.content)
                 unique_results.append(r)
         return unique_results
+
+    async def _get_message_count(self, session_id: str) -> int:
+        """获取会话的消息数量，用于缓存 key 计算。"""
+        if not self.session_store or not self.session_store.is_connected:
+            return 0
+        try:
+            history = await self.session_store.get_history(session_id)
+            return len(history)
+        except Exception:
+            return 0
 
     async def _build_prompt(self, session_id: str | None, question: str, context: str) -> str:
         """Build prompt with conversation history if session exists."""

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     session_ttl: int = 3600
     max_history_turns: int = 20
 
-    # RAG pipeline 配置
+# RAG pipeline 配置
     rerank_top_k: int = 5
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     enable_query_rewrite: bool = True

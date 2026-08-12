@@ -8,17 +8,24 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.api.routes import router
 from app.api.auth import router as auth_router
+from app.api.interview import router as interview_router
 from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
 from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
 from app.services.auth_service import AuthService
+from app.services.interview_service import InterviewService
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
 from app.storage.session_store import SessionStore
 from app.storage.search_store import SearchStore
 from app.storage.user_store import UserStore
+from app.storage.interview_store import InterviewStore
 from app.utils.logger import get_logger
+from app.services.query_rewrite import QueryRewriteService
+from app.services.rerank_service import RerankService
+from app.services.retrieval_service import HybridRetriever
+from app.services.cache_service import ResponseCache
 
 logger = get_logger(__name__)
 
@@ -32,12 +39,20 @@ session_store: SessionStore | None = None
 search_store: SearchStore | None = None
 user_store: UserStore | None = None
 auth_service: AuthService | None = None
+interview_store: InterviewStore | None = None
+interview_service: InterviewService | None = None
+query_rewrite_service: QueryRewriteService | None = None
+hybrid_retriever: HybridRetriever | None = None
+rerank_service: RerankService | None = None
+response_cache: ResponseCache | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global faiss_store, doc_store, embedding_service, llm_client, rag_service
     global index_service, session_store, search_store, user_store, auth_service
+    global interview_store, interview_service
+    global query_rewrite_service, hybrid_retriever, rerank_service, response_cache
 
     logger.info("Initializing services...")
 
@@ -71,8 +86,47 @@ async def lifespan(app: FastAPI):
     # 初始化 SQLite 搜索存储
     search_store = SearchStore()
 
-    index_service = IndexService(faiss_store, doc_store, embedding_service)
-    rag_service = RAGService(faiss_store, embedding_service, llm_client, session_store, search_store)
+    # 查询改写
+    query_rewrite_service = QueryRewriteService(
+        llm=llm_client,
+        enabled=settings.enable_query_rewrite,
+    )
+
+    # 混合检索 + BM25
+    hybrid_retriever = HybridRetriever(
+        faiss_store=faiss_store,
+        embedding=embedding_service,
+        bm25_index_path=settings.bm25_index_path,
+        enabled=settings.enable_hybrid_search,
+    )
+    hybrid_retriever.load_bm25()
+
+    # 重排序
+    rerank_service = RerankService(
+        model_name=settings.rerank_model,
+        enabled=settings.enable_rerank,
+    )
+
+    # 响应缓存
+    response_cache = ResponseCache(
+        session_store=session_store,
+        ttl=settings.cache_ttl,
+    )
+
+    index_service = IndexService(faiss_store, doc_store, embedding_service, hybrid_retriever=hybrid_retriever)
+    rag_service = RAGService(
+        faiss_store, embedding_service, llm_client,
+        session_store=session_store,
+        search_store=search_store,
+        query_rewriter=query_rewrite_service,
+        hybrid_retriever=hybrid_retriever,
+        reranker=rerank_service,
+        cache_service=response_cache,
+    )
+
+    # Initialize interview service
+    interview_store = InterviewStore()
+    interview_service = InterviewService(interview_store, llm_client, faiss_store, embedding_service)
 
     idx_path = Path(settings.idx_path)
     if (idx_path / "index.faiss").exists():
@@ -120,6 +174,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(interview_router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():
