@@ -1429,3 +1429,285 @@ loadIndexStatus();
 loadSessions();
 initAuth();
 setInterval(checkHealth, 30000);
+
+// ============ Interview Module ============
+
+const interviewState = {
+    sessionId: null,
+    currentQuestionId: null,
+    currentRound: 0,
+    position: '',
+    isSubmitting: false,
+    isComplete: false
+};
+
+const interviewEls = {
+    ready: document.getElementById('interview-ready'),
+    progress: document.getElementById('interview-progress'),
+    loading: document.getElementById('interview-loading'),
+    report: document.getElementById('interview-report'),
+    positionBadge: document.getElementById('interview-position-badge'),
+    round: document.getElementById('interview-round'),
+    difficulty: document.getElementById('interview-difficulty'),
+    questionText: document.getElementById('question-text'),
+    answerInput: document.getElementById('answer-input'),
+    btnSubmit: document.getElementById('btn-submit-answer'),
+    btnStart: document.getElementById('btn-start-interview'),
+    btnEnd: document.getElementById('btn-end-interview'),
+    evaluationArea: document.getElementById('evaluation-area'),
+    evaluationScore: document.getElementById('evaluation-score'),
+    evaluationComment: document.getElementById('evaluation-comment'),
+    evaluationTags: document.getElementById('evaluation-tags'),
+    loadingText: document.getElementById('loading-text'),
+    reportScore: document.getElementById('report-score-num'),
+    reportLevel: document.getElementById('report-level'),
+    reportPosition: document.getElementById('report-position'),
+    reportScores: document.getElementById('report-scores'),
+    reportStrengths: document.getElementById('report-strengths'),
+    reportWeaknesses: document.getElementById('report-weaknesses'),
+    reportSuggestions: document.getElementById('report-suggestions'),
+    btnNew: document.getElementById('btn-new-interview'),
+    btnHistory: document.getElementById('btn-view-history'),
+    positionBtns: document.querySelectorAll('.position-btn'),
+};
+
+function initInterview() {
+    // 岗位选择
+    interviewEls.positionBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            interviewEls.positionBtns.forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            interviewState.position = btn.dataset.position;
+            interviewEls.btnStart.disabled = false;
+        });
+    });
+
+    // 开始面试
+    interviewEls.btnStart.addEventListener('click', startInterview);
+    interviewEls.btnSubmit.addEventListener('click', submitAnswer);
+    interviewEls.btnEnd.addEventListener('click', endInterview);
+    interviewEls.btnNew.addEventListener('click', resetInterview);
+    interviewEls.btnHistory.addEventListener('click', () => switchView('chat'));
+
+    // 回答输入
+    interviewEls.answerInput.addEventListener('input', () => {
+        interviewEls.btnSubmit.disabled = !interviewEls.answerInput.value.trim() || interviewState.isSubmitting;
+    });
+    interviewEls.answerInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            submitAnswer();
+        }
+    });
+}
+
+async function startInterview() {
+    if (!interviewState.position) return;
+
+    showInterviewLoading('AI 面试官正在出题...');
+    interviewState.isComplete = false;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position: interviewState.position })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '启动面试失败');
+        }
+
+        const data = await res.json();
+        interviewState.sessionId = data.session_id;
+        interviewState.currentQuestionId = data.question.id;
+        interviewState.currentRound = data.question.round;
+
+        showInterviewProgress(data.question);
+    } catch (e) {
+        showToast('启动面试失败: ' + e.message, 'error');
+        showInterviewReady();
+    }
+}
+
+async function submitAnswer() {
+    const answer = interviewEls.answerInput.value.trim();
+    if (!answer || interviewState.isSubmitting) return;
+
+    interviewState.isSubmitting = true;
+    interviewEls.btnSubmit.disabled = true;
+    interviewEls.btnSubmit.textContent = '评价中...';
+    interviewEls.answerInput.disabled = true;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question_id: interviewState.currentQuestionId,
+                answer: answer
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '提交回答失败');
+        }
+
+        const data = await res.json();
+        showEvaluation(data.evaluation);
+
+        if (data.is_complete) {
+            // 面试结束，显示报告
+            setTimeout(() => showInterviewReport(data.report, interviewState.position), 1000);
+        } else if (data.next_question) {
+            // 下一题
+            setTimeout(() => {
+                interviewState.currentQuestionId = data.next_question.id;
+                interviewState.currentRound = data.next_question.round;
+                hideEvaluation();
+                showInterviewProgress(data.next_question);
+            }, 1500);
+        }
+
+        interviewState.isSubmitting = false;
+        interviewEls.btnSubmit.textContent = '提交回答';
+    } catch (e) {
+        showToast('提交失败: ' + e.message, 'error');
+        interviewState.isSubmitting = false;
+        interviewEls.btnSubmit.disabled = false;
+        interviewEls.btnSubmit.textContent = '提交回答';
+        interviewEls.answerInput.disabled = false;
+    }
+}
+
+async function endInterview() {
+    if (!confirm('确定结束当前面试吗？')) return;
+    if (!interviewState.sessionId) return;
+
+    showInterviewLoading('正在生成面试报告...');
+
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/end`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: interviewState.sessionId })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '结束面试失败');
+        }
+
+        const data = await res.json();
+        showInterviewReport(data.report, interviewState.position);
+    } catch (e) {
+        showToast('结束面试失败: ' + e.message, 'error');
+        showInterviewProgress({});
+    }
+}
+
+function showInterviewLoading(text) {
+    interviewEls.ready.style.display = 'none';
+    interviewEls.progress.style.display = 'none';
+    interviewEls.report.style.display = 'none';
+    interviewEls.loading.style.display = 'flex';
+    interviewEls.loadingText.textContent = text || 'AI 面试官正在出题...';
+}
+
+function showInterviewProgress(question) {
+    interviewEls.ready.style.display = 'none';
+    interviewEls.loading.style.display = 'none';
+    interviewEls.report.style.display = 'none';
+    interviewEls.progress.style.display = 'flex';
+
+    interviewEls.positionBadge.textContent = interviewState.position;
+    interviewEls.round.textContent = `第 ${question.round || 1} 题`;
+    interviewEls.difficulty.textContent = `难度：${question.difficulty === 'easy' ? '偏易' : question.difficulty === 'hard' ? '偏难' : '适中'}`;
+    interviewEls.questionText.textContent = question.content || '加载中...';
+    interviewEls.answerInput.value = '';
+    interviewEls.answerInput.disabled = false;
+    interviewEls.btnSubmit.disabled = true;
+    interviewEls.btnSubmit.textContent = '提交回答';
+    interviewEls.answerInput.focus();
+}
+
+function showInterviewReady() {
+    interviewEls.loading.style.display = 'none';
+    interviewEls.progress.style.display = 'none';
+    interviewEls.report.style.display = 'none';
+    interviewEls.ready.style.display = 'flex';
+}
+
+function showEvaluation(evaluation) {
+    interviewEls.evaluationArea.style.display = 'block';
+    interviewEls.evaluationScore.textContent = `${evaluation.score}/10`;
+    interviewEls.evaluationComment.textContent = evaluation.comment || '';
+    interviewEls.evaluationTags.innerHTML = (evaluation.tags || []).map(tag =>
+        `<span class="evaluation-tag">${escapeHtml(tag)}</span>`
+    ).join('');
+    interviewEls.evaluationArea.scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideEvaluation() {
+    interviewEls.evaluationArea.style.display = 'none';
+    interviewEls.evaluationArea.style.animation = 'none';
+    // Force reflow to re-trigger animation
+    void interviewEls.evaluationArea.offsetWidth;
+    interviewEls.evaluationArea.style.animation = '';
+}
+
+function showInterviewReport(report, position) {
+    interviewEls.loading.style.display = 'none';
+    interviewEls.progress.style.display = 'none';
+    interviewEls.ready.style.display = 'none';
+    interviewEls.report.style.display = 'flex';
+
+    interviewEls.reportPosition.textContent = position || interviewState.position;
+    interviewEls.reportScore.textContent = report.total_score || '0';
+    interviewEls.reportLevel.textContent = report.level || '未知';
+
+    // 得分详情
+    interviewEls.reportScores.innerHTML = '';
+    if (report.score_breakdown) {
+        report.score_breakdown.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'report-score-item';
+            div.innerHTML = `
+                <span class="report-score-round">${item.round}</span>
+                <span class="report-score-question">${escapeHtml(item.question || '')}</span>
+                <div class="report-score-tags">${(item.tags || []).map(t => `<span class="report-score-tag">${escapeHtml(t)}</span>`).join('')}</div>
+                <span class="report-score-value">${item.score}</span>
+            `;
+            interviewEls.reportScores.appendChild(div);
+        });
+    }
+
+    // 知识分析
+    const analysis = report.knowledge_analysis || {};
+    interviewEls.reportStrengths.innerHTML = (analysis.strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('');
+    interviewEls.reportWeaknesses.innerHTML = (analysis.weaknesses || []).map(w => `<li>${escapeHtml(w)}</li>`).join('');
+
+    // 改进建议
+    interviewEls.reportSuggestions.innerHTML = (report.improvement_suggestions || []).map(s =>
+        `<li>${escapeHtml(s)}</li>`
+    ).join('');
+}
+
+function resetInterview() {
+    interviewState.sessionId = null;
+    interviewState.currentQuestionId = null;
+    interviewState.currentRound = 0;
+    interviewState.isSubmitting = false;
+    interviewState.isComplete = false;
+
+    interviewEls.positionBtns.forEach(b => b.classList.remove('selected'));
+    interviewEls.btnStart.disabled = true;
+    interviewEls.evaluationArea.style.display = 'none';
+
+    showInterviewReady();
+}
+
+// 初始化面试模块
+initInterview();

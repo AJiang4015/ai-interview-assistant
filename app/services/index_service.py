@@ -10,10 +10,17 @@ logger = get_logger(__name__)
 
 
 class IndexService:
-    def __init__(self, faiss_store: FaissStore, doc_store: DocStore, embedding: EmbeddingService):
+    def __init__(
+        self,
+        faiss_store: FaissStore,
+        doc_store: DocStore,
+        embedding: EmbeddingService,
+        hybrid_retriever=None,
+    ):
         self.faiss = faiss_store
         self.doc_store = doc_store
         self.embedding = embedding
+        self.hybrid_retriever = hybrid_retriever  # 可选
         self.splitter = MarkdownSplitter(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
@@ -64,6 +71,14 @@ class IndexService:
         self.faiss.add_vectors(vectors, chunks)
         self.faiss.save(settings.idx_path)
         self.doc_store.save(chunks)
+
+        # 同步构建 BM25 索引
+        if self.hybrid_retriever:
+            bm25_docs = []
+            for idx, c in enumerate(chunks):
+                doc = {**c, "_id": idx}
+                bm25_docs.append(doc)
+            self.hybrid_retriever.save_bm25(bm25_docs)
 
         status_msg = f"Index built: {len(chunks)} chunks from {len(kb_files) - len(failed_files)} files"
         if failed_files:

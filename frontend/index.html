@@ -40,6 +40,10 @@
                     <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M14 2H4a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V4l-2-2z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M14 2v2h2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                     知识库
                 </button>
+                <button class="nav-item" data-view="interview">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 4h14v10H2z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="6" cy="8" r="1.5" fill="currentColor"/><circle cx="10" cy="8" r="1.5" fill="currentColor"/><circle cx="14" cy="8" r="1.5" fill="currentColor"/><path d="M6 11h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                    AI面试
+                </button>
             </nav>
 
             <div class="status-panel">
@@ -251,6 +255,133 @@
                         </div>
                         <div class="file-list" id="file-list">
                             <div class="file-list-empty">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="view interview-view" id="view-interview">
+                <!-- 准备阶段 -->
+                <div class="interview-ready" id="interview-ready">
+                    <div class="interview-ready-content">
+                        <div class="interview-ready-icon">🎯</div>
+                        <h2>AI 模拟面试</h2>
+                        <p class="interview-ready-desc">选择岗位方向，AI 面试官将实时出题、评价你的回答，并生成面试报告。</p>
+                        <div class="position-select">
+                            <label>选择岗位</label>
+                            <div class="position-options">
+                                <button class="position-btn" data-position="Java后端">Java 后端开发</button>
+                                <button class="position-btn" data-position="AI应用开发">AI 应用开发</button>
+                            </div>
+                        </div>
+                        <button class="btn-primary btn-start-interview" id="btn-start-interview" disabled>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2l10 6-10 6V2z" fill="currentColor"/></svg>
+                            开始面试
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 面试进行中 -->
+                <div class="interview-progress" id="interview-progress" style="display:none;">
+                    <div class="interview-header">
+                        <div class="interview-header-left">
+                            <span class="interview-badge" id="interview-position-badge">Java后端</span>
+                            <span class="interview-round" id="interview-round">第 1 题</span>
+                        </div>
+                        <div class="interview-header-right">
+                            <span class="interview-difficulty" id="interview-difficulty">难度：适中</span>
+                            <button class="btn-secondary btn-sm" id="btn-end-interview">结束面试</button>
+                        </div>
+                    </div>
+
+                    <div class="interview-body" id="interview-body">
+                        <!-- 题目区域 -->
+                        <div class="interview-question-card" id="question-card">
+                            <div class="question-content" id="question-content">
+                                <p id="question-text">加载中...</p>
+                            </div>
+                        </div>
+
+                        <!-- 回答区域 -->
+                        <div class="interview-answer-area" id="answer-area">
+                            <textarea id="answer-input" placeholder="输入你的回答..." rows="4"></textarea>
+                            <div class="answer-actions">
+                                <span class="answer-hint">Ctrl+Enter 提交</span>
+                                <button class="btn-primary" id="btn-submit-answer" disabled>
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8l12-5-4 12-3-5-5-2z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                                    提交回答
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 评价区域 -->
+                        <div class="interview-evaluation" id="evaluation-area" style="display:none;">
+                            <div class="evaluation-header">
+                                <span class="evaluation-title">评价</span>
+                                <span class="evaluation-score" id="evaluation-score">-</span>
+                            </div>
+                            <div class="evaluation-comment" id="evaluation-comment"></div>
+                            <div class="evaluation-tags" id="evaluation-tags"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 加载中 -->
+                <div class="interview-loading" id="interview-loading" style="display:none;">
+                    <div class="loading-spinner"></div>
+                    <p id="loading-text">AI 面试官正在出题...</p>
+                </div>
+
+                <!-- 报告阶段 -->
+                <div class="interview-report" id="interview-report" style="display:none;">
+                    <div class="report-header">
+                        <div class="report-header-left">
+                            <h2>面试报告</h2>
+                            <p class="subtitle" id="report-position">Java 后端开发</p>
+                        </div>
+                        <div class="report-header-right">
+                            <div class="report-score-circle" id="report-score-circle">
+                                <span class="report-score-num" id="report-score-num">-</span>
+                                <span class="report-score-label">平均分</span>
+                            </div>
+                            <div class="report-level" id="report-level">-</div>
+                        </div>
+                    </div>
+
+                    <div class="report-body">
+                        <div class="report-section">
+                            <h3>得分详情</h3>
+                            <div class="report-scores" id="report-scores"></div>
+                        </div>
+
+                        <div class="report-section">
+                            <h3>知识分析</h3>
+                            <div class="report-analysis" id="report-analysis">
+                                <div class="analysis-column">
+                                    <div class="analysis-title strengths-title">掌握较好</div>
+                                    <ul class="analysis-list" id="report-strengths"></ul>
+                                </div>
+                                <div class="analysis-column">
+                                    <div class="analysis-title weaknesses-title">需要加强</div>
+                                    <ul class="analysis-list" id="report-weaknesses"></ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="report-section">
+                            <h3>改进建议</h3>
+                            <ul class="report-suggestions" id="report-suggestions"></ul>
+                        </div>
+
+                        <div class="report-actions">
+                            <button class="btn-primary" id="btn-new-interview">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5"/></svg>
+                                再来一次
+                            </button>
+                            <button class="btn-secondary" id="btn-view-history">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                                查看历史
+                            </button>
                         </div>
                     </div>
                 </div>
