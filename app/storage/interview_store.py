@@ -49,6 +49,8 @@ class InterviewStore:
                     score          REAL DEFAULT 0,
                     difficulty     TEXT DEFAULT 'medium',
                     source         TEXT DEFAULT 'kb',
+                    topic          TEXT DEFAULT '',
+                    category       TEXT DEFAULT '',
                     created_at     TEXT,
                     FOREIGN KEY (session_id) REFERENCES interview_sessions(id)
                 );
@@ -74,21 +76,26 @@ class InterviewStore:
         logger.info(f"Interview session created: {session_id} for {position}")
         return {"id": session_id, "position": position, "status": "in_progress", "started_at": now}
 
-    def add_question(self, session_id: str, round_num: int, question: str, difficulty: str = "medium", source: str = "kb") -> dict:
+    def add_question(self, session_id: str, round_num: int, question: str,
+                     difficulty: str = "medium", source: str = "kb",
+                     topic: str = "", category: str = "") -> dict:
         """Add a question to the interview."""
         qid = str(uuid.uuid4())
         now = self._now()
         with self._get_conn() as conn:
             conn.execute(
-                """INSERT INTO interview_questions (id, session_id, round, question, difficulty, source, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (qid, session_id, round_num, question, difficulty, source, now),
+                """INSERT INTO interview_questions
+                   (id, session_id, round, question, difficulty, source, topic, category, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (qid, session_id, round_num, question, difficulty, source, topic, category, now),
             )
             conn.execute(
                 "UPDATE interview_sessions SET total_rounds = ? WHERE id = ?",
                 (round_num, session_id),
             )
-        return {"id": qid, "session_id": session_id, "round": round_num, "question": question, "difficulty": difficulty}
+        return {"id": qid, "session_id": session_id, "round": round_num,
+                "question": question, "difficulty": difficulty,
+                "topic": topic, "category": category}
 
     def update_answer(self, question_id: str, answer: str, evaluation: dict, score: float):
         """Update a question with user's answer and evaluation."""
