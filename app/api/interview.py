@@ -1,6 +1,6 @@
 """Interview API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.schemas import BaseModel, Field
 
@@ -84,5 +84,18 @@ async def list_history():
     try:
         sessions = _get_service().history()
         return {"total": len(sessions), "sessions": sessions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/coverage")
+async def get_coverage(session_id: str = Query(...), position: str = Query(...)):
+    """Get topic coverage statistics for an interview session."""
+    try:
+        service = _get_service()
+        if not hasattr(service, 'topic_tracker') or not service.topic_tracker:
+            return {"categories": {}, "weakest": None, "untouched": [], "total_covered": 0, "total_topics": 0}
+        coverage = service.topic_tracker.get_coverage(session_id, position)
+        return coverage
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
