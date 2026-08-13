@@ -1438,7 +1438,8 @@ const interviewState = {
     currentRound: 0,
     position: '',
     isSubmitting: false,
-    isComplete: false
+    isComplete: false,
+    resumeFile: null,
 };
 
 const interviewEls = {
@@ -1469,6 +1470,12 @@ const interviewEls = {
     btnNew: document.getElementById('btn-new-interview'),
     btnHistory: document.getElementById('btn-view-history'),
     positionBtns: document.querySelectorAll('.position-btn'),
+    resumeUploadZone: document.getElementById('resume-upload-zone'),
+    resumeFileInput: document.getElementById('resume-file-input'),
+    resumeFileInfo: document.getElementById('resume-file-info'),
+    resumeFileName: document.getElementById('resume-file-name'),
+    resumeFileRemove: document.getElementById('resume-file-remove'),
+    jdInput: document.getElementById('jd-input'),
 };
 
 function initInterview() {
@@ -1499,6 +1506,51 @@ function initInterview() {
             submitAnswer();
         }
     });
+
+    // Resume upload: click to select
+    interviewEls.resumeUploadZone.addEventListener('click', () => {
+        interviewEls.resumeFileInput.click();
+    });
+
+    // Resume file selected
+    interviewEls.resumeFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            interviewState.resumeFile = file;
+            interviewEls.resumeFileName.textContent = file.name;
+            interviewEls.resumeFileInfo.style.display = 'flex';
+            interviewEls.resumeUploadZone.style.display = 'none';
+        }
+    });
+
+    // Resume file remove
+    interviewEls.resumeFileRemove.addEventListener('click', (e) => {
+        e.stopPropagation();
+        interviewState.resumeFile = null;
+        interviewEls.resumeFileInput.value = '';
+        interviewEls.resumeFileInfo.style.display = 'none';
+        interviewEls.resumeUploadZone.style.display = 'block';
+    });
+
+    // Resume drag & drop
+    interviewEls.resumeUploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        interviewEls.resumeUploadZone.classList.add('dragover');
+    });
+    interviewEls.resumeUploadZone.addEventListener('dragleave', () => {
+        interviewEls.resumeUploadZone.classList.remove('dragover');
+    });
+    interviewEls.resumeUploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        interviewEls.resumeUploadZone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type === 'application/pdf') {
+            interviewState.resumeFile = file;
+            interviewEls.resumeFileName.textContent = file.name;
+            interviewEls.resumeFileInfo.style.display = 'flex';
+            interviewEls.resumeUploadZone.style.display = 'none';
+        }
+    });
 }
 
 async function startInterview() {
@@ -1508,15 +1560,26 @@ async function startInterview() {
     interviewState.isComplete = false;
 
     try {
+        const formData = new FormData();
+        formData.append('position', interviewState.position);
+
+        if (interviewState.resumeFile) {
+            formData.append('resume_file', interviewState.resumeFile);
+        }
+
+        const jdText = interviewEls.jdInput.value.trim();
+        if (jdText) {
+            formData.append('jd_text', jdText);
+        }
+
         const res = await fetch(`${API_BASE}/api/interview/start`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ position: interviewState.position })
+            body: formData,
         });
 
         if (!res.ok) {
             const err = await res.json();
-            throw new Error(err.detail || '启动面试失败');
+            throw new Error(err.detail || '请求失败');
         }
 
         const data = await res.json();
@@ -1525,8 +1588,8 @@ async function startInterview() {
         interviewState.currentRound = data.question.round;
 
         showInterviewProgress(data.question);
-    } catch (e) {
-        showToast('启动面试失败: ' + e.message, 'error');
+    } catch (err) {
+        showToast('error', '出题失败: ' + err.message);
         showInterviewReady();
     }
 }
@@ -1705,6 +1768,13 @@ function resetInterview() {
     interviewEls.positionBtns.forEach(b => b.classList.remove('selected'));
     interviewEls.btnStart.disabled = true;
     interviewEls.evaluationArea.style.display = 'none';
+
+    // Reset resume + JD
+    interviewState.resumeFile = null;
+    interviewEls.resumeFileInput.value = '';
+    interviewEls.resumeFileInfo.style.display = 'none';
+    interviewEls.resumeUploadZone.style.display = 'block';
+    interviewEls.jdInput.value = '';
 
     showInterviewReady();
 }

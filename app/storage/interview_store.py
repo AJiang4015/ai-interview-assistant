@@ -55,21 +55,39 @@ class InterviewStore:
 
                 CREATE INDEX IF NOT EXISTS idx_iq_session ON interview_questions(session_id);
             """)
+            # Add columns for existing tables (no-op if already present)
+            for col, col_type in [
+                ("resume_text", "TEXT DEFAULT ''"),
+                ("resume_analysis", "TEXT DEFAULT '{}'"),
+                ("jd_text", "TEXT DEFAULT ''"),
+                ("jd_analysis", "TEXT DEFAULT '{}'"),
+                ("match_analysis", "TEXT DEFAULT '{}'"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE interview_sessions ADD COLUMN {col} {col_type}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
-    def create_session(self, position: str) -> dict:
+    def create_session(self, position: str,
+                       resume_text: str = '',
+                       resume_analysis: str = '{}',
+                       jd_text: str = '',
+                       jd_analysis: str = '{}',
+                       match_analysis: str = '{}') -> dict:
         """Create a new interview session."""
         session_id = str(uuid.uuid4())
         now = self._now()
         with self._get_conn() as conn:
             conn.execute(
-                """INSERT INTO interview_sessions (id, position, status, started_at)
-                   VALUES (?, ?, 'in_progress', ?)""",
-                (session_id, position, now),
+                """INSERT INTO interview_sessions
+                   (id, position, status, started_at, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis)
+                   VALUES (?, ?, 'in_progress', ?, ?, ?, ?, ?, ?)""",
+                (session_id, position, now, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis),
             )
         logger.info(f"Interview session created: {session_id} for {position}")
         return {"id": session_id, "position": position, "status": "in_progress", "started_at": now}
@@ -125,6 +143,39 @@ class InterviewStore:
                 (now, report_json, session_id),
             )
         logger.info(f"Interview session completed: {session_id}")
+
+    def update_analysis(self, session_id: str,
+                        resume_text: str = None,
+                        resume_analysis: str = None,
+                        jd_text: str = None,
+                        jd_analysis: str = None,
+                        match_analysis: str = None):
+        """Update resume/JD/analysis fields for a session."""
+        updates = []
+        values = []
+        if resume_text is not None:
+            updates.append("resume_text = ?")
+            values.append(resume_text)
+        if resume_analysis is not None:
+            updates.append("resume_analysis = ?")
+            values.append(resume_analysis)
+        if jd_text is not None:
+            updates.append("jd_text = ?")
+            values.append(jd_text)
+        if jd_analysis is not None:
+            updates.append("jd_analysis = ?")
+            values.append(jd_analysis)
+        if match_analysis is not None:
+            updates.append("match_analysis = ?")
+            values.append(match_analysis)
+        if not updates:
+            return
+        values.append(session_id)
+        with self._get_conn() as conn:
+            conn.execute(
+                f"UPDATE interview_sessions SET {', '.join(updates)} WHERE id = ?",
+                values,
+            )
 
     def get_session(self, session_id: str) -> Optional[dict]:
         """Get interview session metadata."""

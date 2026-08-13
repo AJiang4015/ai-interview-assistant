@@ -1,6 +1,8 @@
 """Interview API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
 from app.api.schemas import BaseModel, Field
 
@@ -31,11 +33,21 @@ def _get_service():
 
 
 @router.post("/start")
-async def start_interview(req: StartInterviewRequest):
-    """Start a new interview session."""
+async def start_interview(
+    position: str = Form(...),
+    resume_file: Optional[UploadFile] = File(None),
+    jd_text: Optional[str] = Form(None),
+):
+    """Start a new interview session, optionally with resume+JD analysis."""
     try:
-        result = await _get_service().start(req.position)
+        service = _get_service()
+        # Validate file type
+        if resume_file and not resume_file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="仅支持PDF格式的简历文件")
+        result = await service.start(position, resume_file=resume_file, jd_text=jd_text)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

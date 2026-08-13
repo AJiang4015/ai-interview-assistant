@@ -15,6 +15,7 @@ from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
 from app.services.auth_service import AuthService
 from app.services.interview_service import InterviewService
+from app.services.resume_parser import ResumeParser
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
 from app.storage.session_store import SessionStore
@@ -41,6 +42,7 @@ user_store: UserStore | None = None
 auth_service: AuthService | None = None
 interview_store: InterviewStore | None = None
 interview_service: InterviewService | None = None
+resume_parser: ResumeParser | None = None
 query_rewrite_service: QueryRewriteService | None = None
 hybrid_retriever: HybridRetriever | None = None
 rerank_service: RerankService | None = None
@@ -51,7 +53,7 @@ response_cache: ResponseCache | None = None
 async def lifespan(app: FastAPI):
     global faiss_store, doc_store, embedding_service, llm_client, rag_service
     global index_service, session_store, search_store, user_store, auth_service
-    global interview_store, interview_service
+    global interview_store, interview_service, resume_parser
     global query_rewrite_service, hybrid_retriever, rerank_service, response_cache
 
     logger.info("Initializing services...")
@@ -124,9 +126,15 @@ async def lifespan(app: FastAPI):
         cache_service=response_cache,
     )
 
+    # Initialize resume parser
+    resume_parser = ResumeParser(llm=llm_client)
+
     # Initialize interview service
     interview_store = InterviewStore()
-    interview_service = InterviewService(interview_store, llm_client, faiss_store, embedding_service)
+    interview_service = InterviewService(
+        interview_store, llm_client, faiss_store, embedding_service,
+        resume_parser=resume_parser,
+    )
 
     idx_path = Path(settings.idx_path)
     if (idx_path / "index.faiss").exists():

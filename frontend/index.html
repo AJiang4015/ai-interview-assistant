@@ -274,6 +274,39 @@
                                 <button class="position-btn" data-position="AI应用开发">AI 应用开发</button>
                             </div>
                         </div>
+                        <div class="resume-jd-section">
+                            <div class="resume-jd-divider">
+                                <span>简历与岗位匹配（可选）</span>
+                            </div>
+
+                            <!-- 简历上传 -->
+                            <div class="resume-upload-area">
+                                <label class="resume-jd-label">上传简历</label>
+                                <div class="resume-upload-zone" id="resume-upload-zone">
+                                    <div class="resume-upload-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                                            <path d="M12 16V4m0 0L8 8m4-4l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                        </svg>
+                                    </div>
+                                    <p class="resume-upload-text">拖拽PDF简历到此处，或 <span class="resume-upload-link">点击选择文件</span></p>
+                                    <p class="resume-upload-hint">仅支持 .pdf 格式</p>
+                                    <input type="file" id="resume-file-input" hidden accept=".pdf">
+                                </div>
+                                <div class="resume-file-info" id="resume-file-info" style="display:none;">
+                                    <span class="resume-file-name" id="resume-file-name"></span>
+                                    <button class="resume-file-remove" id="resume-file-remove" title="移除文件">
+                                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.5"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- JD输入 -->
+                            <div class="jd-input-area">
+                                <label class="resume-jd-label">招聘JD</label>
+                                <textarea id="jd-input" class="jd-textarea" placeholder="粘贴招聘JD内容..." rows="4"></textarea>
+                            </div>
+                        </div>
                         <button class="btn-primary btn-start-interview" id="btn-start-interview" disabled>
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2l10 6-10 6V2z" fill="currentColor"/></svg>
                             开始面试

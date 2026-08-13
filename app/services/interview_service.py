@@ -8,7 +8,10 @@ import json
 import re
 from typing import Optional
 
+from fastapi import UploadFile
+
 from app.services.llm_client import LLMClient
+from app.services.resume_parser import ResumeParser
 from app.storage.faiss_store import FaissStore
 from app.services.embedding import EmbeddingService
 from app.storage.interview_store import InterviewStore
@@ -142,18 +145,73 @@ class InterviewService:
         llm: LLMClient,
         faiss: Optional[FaissStore] = None,
         embedding: Optional[EmbeddingService] = None,
+        resume_parser: Optional[ResumeParser] = None,
     ):
         self.store = store
         self.llm = llm
         self.faiss = faiss
         self.embedding = embedding
+        self.resume_parser = resume_parser
         self.max_rounds = 15
         self.min_rounds = 5
 
-    async def start(self, position: str) -> dict:
-        """Start a new interview session and generate the first question."""
+    async def start(
+        self,
+        position: str,
+        resume_file: Optional[UploadFile] = None,
+        jd_text: Optional[str] = None,
+    ) -> dict:
+        """Start a new interview session, optionally with resume+JD analysis."""
+        # Create session with empty analysis first
         session = self.store.create_session(position)
-        question_data = await self._generate_question(session["id"], position, round_num=1)
+
+        # Parse resume and JD if provided
+        resume_analysis = {}
+        jd_analysis = {}
+        match_analysis = {}
+        resume_raw = ""
+        jd_raw = ""
+
+        if resume_file and self.resume_parser:
+            try:
+                resume_raw = await self.resume_parser.extract_pdf_text(resume_file)
+                if resume_raw:
+                    resume_analysis = await self.resume_parser.parse_resume(resume_raw)
+            except Exception as e:
+                logger.warning(f"Resume parsing failed: {e}")
+
+        if jd_text and self.resume_parser:
+            try:
+                jd_raw = jd_text
+                jd_analysis = await self.resume_parser.parse_jd(jd_text)
+            except Exception as e:
+                logger.warning(f"JD parsing failed: {e}")
+
+        # Perform matching analysis if both resume and JD are available
+        if resume_analysis and jd_analysis:
+            try:
+                match_analysis = await self.resume_parser.analyze_match(resume_analysis, jd_analysis)
+            except Exception as e:
+                logger.warning(f"Match analysis failed: {e}")
+
+        # Store analysis results
+        self.store.update_analysis(
+            session["id"],
+            resume_text=resume_raw[:5000] if resume_raw else None,
+            resume_analysis=json.dumps(resume_analysis, ensure_ascii=False) if resume_analysis else None,
+            jd_text=jd_raw[:3000] if jd_raw else None,
+            jd_analysis=json.dumps(jd_analysis, ensure_ascii=False) if jd_analysis else None,
+            match_analysis=json.dumps(match_analysis, ensure_ascii=False) if match_analysis else None,
+        )
+
+        # Generate first question with personalized context
+        question_data = await self._generate_question(
+            session["id"], position, round_num=1,
+            match_analysis=match_analysis,
+            resume_analysis=resume_analysis,
+            jd_analysis=jd_analysis,
+        )
+
         return {
             "session_id": session["id"],
             "question": question_data,
@@ -220,7 +278,8 @@ class InterviewService:
         next_difficulty = evaluation.get("next_difficulty", "medium")
         next_round = total_rounds + 1
         next_q = await self._generate_question(
-            session_id, session["position"], next_round, next_difficulty, question["answer"], evaluation
+            session_id, session["position"], next_round, next_difficulty, question["answer"], evaluation,
+            match_analysis=None, resume_analysis=None, jd_analysis=None,
         )
 
         return {
@@ -265,6 +324,9 @@ class InterviewService:
         difficulty: str = "medium",
         last_answer: str = "",
         last_evaluation: Optional[dict] = None,
+        match_analysis: Optional[dict] = None,
+        resume_analysis: Optional[dict] = None,
+        jd_analysis: Optional[dict] = None,
     ) -> dict:
         """Generate a question for the interview."""
         # Get context from previous questions
@@ -278,13 +340,35 @@ class InterviewService:
         # Retrieve knowledge base context
         kb_context = await self._retrieve_context(f"{position} 技术面试题 {difficulty}")
 
+        # Build personalized context if match analysis is available
+        personalized_context = ""
+        if match_analysis and match_analysis.get("matched_skills"):
+            jd_summary = jd_analysis.get("summary", "") if jd_analysis else ""
+            resume_summary = resume_analysis.get("summary", "") if resume_analysis else ""
+            missing = ", ".join(match_analysis.get("missing_skills", []))
+            matched = ", ".join(match_analysis.get("matched_skills", []))
+            risk = ", ".join(match_analysis.get("risk_areas", []))
+            focus = match_analysis.get("interview_focus", "")
+
+            personalized_context = f"""
+【简历与JD匹配分析】
+岗位要求：{jd_summary}
+候选人背景：{resume_summary}
+已匹配技能：{matched}
+技能缺口：{missing}
+高风险追问方向：{risk}
+面试重点：{focus}
+
+请基于以上分析，针对候选人的简历短板和岗位核心要求出题。
+"""
+
         prompt = QUESTION_PROMPT.format(
             position=position,
             round=round_num,
             history_count=history_count,
             difficulty_history=difficulty_history,
             last_evaluation_summary=last_eval_summary,
-            knowledge_context=kb_context,
+            knowledge_context=kb_context + personalized_context,
             难度提示=_difficulty_label(difficulty),
         )
 

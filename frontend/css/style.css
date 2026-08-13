@@ -2161,3 +2161,150 @@ body {
         font-size: 22px;
     }
 }
+
+/* ============ Resume + JD Upload Section ============ */
+.resume-jd-section {
+    width: 100%;
+    max-width: 520px;
+    margin-top: 8px;
+}
+
+.resume-jd-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 0;
+    color: var(--text-secondary, #888);
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.resume-jd-divider::before,
+.resume-jd-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-color, #333);
+}
+
+.resume-upload-area,
+.jd-input-area {
+    margin-bottom: 14px;
+}
+
+.resume-jd-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary, #e0e0e0);
+    margin-bottom: 6px;
+}
+
+.resume-upload-zone {
+    border: 2px dashed var(--border-color, #444);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.resume-upload-zone:hover {
+    border-color: var(--primary, #6054F1);
+    background: rgba(96, 84, 241, 0.05);
+}
+
+.resume-upload-zone.dragover {
+    border-color: var(--primary, #6054F1);
+    background: rgba(96, 84, 241, 0.1);
+}
+
+.resume-upload-icon {
+    color: var(--text-secondary, #888);
+    margin-bottom: 8px;
+}
+
+.resume-upload-text {
+    font-size: 13px;
+    color: var(--text-secondary, #888);
+    margin: 0 0 4px;
+}
+
+.resume-upload-link {
+    color: var(--primary, #6054F1);
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.resume-upload-link:hover {
+    text-decoration: underline;
+}
+
+.resume-upload-hint {
+    font-size: 11px;
+    color: var(--text-muted, #666);
+    margin: 0;
+}
+
+.resume-file-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(96, 84, 241, 0.1);
+    border: 1px solid rgba(96, 84, 241, 0.3);
+    border-radius: 6px;
+    margin-top: 8px;
+}
+
+.resume-file-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-primary, #e0e0e0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.resume-file-remove {
+    background: none;
+    border: none;
+    color: var(--text-secondary, #888);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.2s;
+}
+
+.resume-file-remove:hover {
+    color: #ff4444;
+}
+
+.jd-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--input-bg, #1e1e1e);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+    color: var(--text-primary, #e0e0e0);
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 80px;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.jd-textarea:focus {
+    outline: none;
+    border-color: var(--primary, #6054F1);
+    box-shadow: 0 0 0 2px rgba(96, 84, 241, 0.15);
+}
+
+.jd-textarea::placeholder {
+    color: var(--text-muted, #555);
+}
