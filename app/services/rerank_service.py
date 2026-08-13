@@ -1,7 +1,14 @@
+import json
 from dataclasses import dataclass
+from typing import Optional
+
+import httpx
+
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+SILICONFLOW_RERANK_URL = "https://api.siliconflow.cn/v1/rerank"
 
 
 @dataclass
@@ -12,10 +19,16 @@ class RerankResult:
 
 
 class RerankService:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3", enabled: bool = True):
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "Qwen/Qwen3-Reranker-4B",
+        enabled: bool = True,
+    ):
+        self._api_key = api_key
         self._model_name = model_name
         self._enabled = enabled
-        self._model = None
+        self._client: Optional[httpx.AsyncClient] = None
 
     @property
     def enabled(self) -> bool:
@@ -23,15 +36,12 @@ class RerankService:
 
     @property
     def loaded(self) -> bool:
-        return self._model is not None
+        return self._client is not None
 
-    def load_model(self):
-        if self._model is not None:
-            return
-        logger.info(f"Loading reranker model: {self._model_name}")
-        from sentence_transformers import CrossEncoder
-        self._model = CrossEncoder(self._model_name)
-        logger.info(f"Reranker model loaded: {self._model_name}")
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=60.0)
+        return self._client
 
     async def rerank(
         self, query: str, documents: list[str], top_k: int = 5
@@ -42,15 +52,55 @@ class RerankService:
                 for i, doc in enumerate(documents[:top_k])
             ]
 
-        if self._model is None:
-            self.load_model()
+        if not self._api_key:
+            logger.warning("SiliconFlow API key not set, skipping rerank")
+            return [
+                RerankResult(index=i, score=1.0, content=doc)
+                for i, doc in enumerate(documents[:top_k])
+            ]
 
-        pairs = [[query, doc] for doc in documents]
-        scores = self._model.predict(pairs)
-        scored = list(enumerate(zip(scores, documents)))
-        scored.sort(key=lambda x: x[1][0], reverse=True)
+        try:
+            client = self._get_client()
+            payload = {
+                "model": self._model_name,
+                "query": query,
+                "documents": documents,
+                "top_k": top_k,
+            }
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            }
 
-        return [
-            RerankResult(index=idx, score=float(score), content=doc)
-            for idx, (score, doc) in scored[:top_k]
-        ]
+            logger.info(
+                f"Reranking {len(documents)} docs with {self._model_name}..."
+            )
+            resp = await client.post(
+                SILICONFLOW_RERANK_URL, json=payload, headers=headers
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = data.get("results", [])
+            reranked = []
+            for r in results:
+                idx = r.get("index", 0)
+                score = r.get("relevance_score", 0.0)
+                doc_text = r.get("document", {}).get("text", "")
+                reranked.append(RerankResult(index=idx, score=score, content=doc_text))
+
+            logger.info(f"Rerank complete, top score: {reranked[0].score:.4f}")
+            return reranked
+
+        except Exception as e:
+            logger.error(f"Rerank API call failed: {e}")
+            # Fallback: return original order
+            return [
+                RerankResult(index=i, score=1.0, content=doc)
+                for i, doc in enumerate(documents[:top_k])
+            ]
+
+    async def close(self):
+        if self._client:
+            await self._client.aclose()
+            self._client = None

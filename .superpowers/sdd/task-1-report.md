@@ -1,30 +1,34 @@
-### Task 1 Report: Markdown 渲染 — XSS 防护 + 流式性能优化
+# Task 1 执行报告: 配置项 + 响应缓存服务
 
-#### 1. 状态: DONE
+## 执行步骤
 
-所有 6 个步骤均已完成，无阻塞问题。
+### Step 1: 修改 app/config.py，新增配置项
+- 在 `Settings` 类中追加了 8 个 RAG pipeline 配置字段：
+  `rerank_top_k`, `rerank_model`, `enable_query_rewrite`, `enable_hybrid_search`,
+  `enable_rerank`, `enable_cache`, `bm25_index_path`, `cache_ttl`
+- 输出: 文件修改成功，新增 8 行配置
 
-#### 2. 修改内容
+### Step 2: 给 SessionStore 增加 client 属性
+- 在 `app/storage/session_store.py` 的 `is_connected` 属性之前，新增了 `@property def client(self): return self._client`
+- 输出: 文件修改成功，新增 3 行
 
-| 文件 | 修改内容 |
-|------|----------|
-| `frontend/index.html` | 在第 11 行 `highlight.js` CDN 之后添加了 DOMPurify 3.1.6 CDN 脚本标签 `<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>`（第 12 行） |
-| `frontend/js/app.js` | **(a)** `renderMarkdown()` 函数（L406-L417）：`wrapper.innerHTML = html` 改为 `wrapper.innerHTML = DOMPurify.sanitize(html)`，为完整渲染添加 XSS 消毒 |
-| `frontend/js/app.js` | **(b)** 新增 `renderMarkdownNoHighlight()` 函数（L419-L424）：流式渲染专用，Markdown 格式化 + DOMPurify 消毒，但不执行 highlight.js 代码高亮 |
-| `frontend/js/app.js` | **(c)** token 事件处理（L602）：`renderMarkdown(accumulatedContent)` 改为 `renderMarkdownNoHighlight(accumulatedContent)`，流式过程中跳过代码高亮以提升性能 |
-| `frontend/js/app.js` | **(d)** `renderMessages()` 中 pending stream 渲染（L324）：`renderMarkdown(pending.accumulatedContent)` 改为 `renderMarkdownNoHighlight(pending.accumulatedContent)`，恢复页面时也使用无高亮渲染 |
-| `frontend/js/app.js` | **(e)** done 事件处理（L638）：`renderMarkdown(accumulatedContent)` 保持不变，由于 `renderMarkdown()` 内部已包含 DOMPurify，无需额外修改 |
+### Step 3: 创建 app/services/cache_service.py
+- 创建 `ResponseCache` 类，包含 `available` 属性、`make_key()`、`get()`、`set()` 方法
+- 使用 `self._store.client.get()` 和 `self._store.client.setex()` 替代原模板中的 `self._store.redis.*`，适配 SessionStore 的实际接口
+- 输出: 文件创建成功，45 行
 
-#### 3. 验证结果
+### Step 4: 验证语法
+- 命令: `python -c "import ast; ast.parse(open('app/services/cache_service.py').read()); print('Syntax OK')"`
+- 输出: `Syntax OK`
 
-- ✅ `frontend/index.html` 第 12 行包含 DOMPurify 3.1.6 CDN 脚本标签
-- ✅ `app.js` 中 `renderMarkdown()` 使用 `DOMPurify.sanitize(html)` 进行消毒
-- ✅ `app.js` 中新增 `renderMarkdownNoHighlight()` 函数，不含 highlight.js 调用
-- ✅ token 事件回调使用 `renderMarkdownNoHighlight()`
-- ✅ done 事件回调使用 `renderMarkdown()`（内部已含 DOMPurify + 代码高亮）
-- ✅ `renderMessages()` 中 pending stream 使用 `renderMarkdownNoHighlight()`
-- ✅ 所有旧字符串替换正确，无残留引用
+### Step 5: Git Commit
+- 暂存文件: `app/config.py`, `app/services/cache_service.py`, `app/storage/session_store.py`
+- 提交信息: `feat: add config and response cache service`
+- 提交哈希: `d6abb614b2f6b8d7fe5d29f23fac4697897a4d27`
 
-#### 4. 关注点
+## 测试结果
+- 语法验证: 通过
 
-无。所有修改严格遵循任务简报中的 before/after 对比，无额外改动。
+## 备注
+- 缓存服务中使用了 `self._store.client` 而非原始模板中的 `self._store.redis`，因为 `SessionStore` 的 Redis 客户端是私有属性 `_client`，通过新增的 `client` 属性暴露
+- commit 包含 `app/storage/session_store.py` 的修改（新增 `client` 属性），这是让缓存服务正常工作的必要依赖

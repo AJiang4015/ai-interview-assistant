@@ -15,7 +15,8 @@ const els = {
     views: {
         chat: document.getElementById('view-chat'),
         index: document.getElementById('view-index'),
-        docs: document.getElementById('view-docs')
+        docs: document.getElementById('view-docs'),
+        interview: document.getElementById('view-interview')
     },
     dotFaiss: document.getElementById('dot-faiss'),
     dotEmbedding: document.getElementById('dot-embedding'),
