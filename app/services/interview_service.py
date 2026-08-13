@@ -12,6 +12,7 @@ from app.services.llm_client import LLMClient
 from app.storage.faiss_store import FaissStore
 from app.services.embedding import EmbeddingService
 from app.storage.interview_store import InterviewStore
+from app.services.topic_tracker import TopicTracker
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +35,12 @@ QUESTION_PROMPT = """你正在进行一场 {position} 岗位的面试。
 
 {knowledge_context}
 
+{coverage_summary}
+{suggested_topic}
+
+【知识树参考】
+{knowledge_tree_structure}
+
 请出一道{难度提示}技术面试题，混合技术知识点、项目经验或系统设计方向。
 题目应该是面试中常见的高质量题目。
 
@@ -42,7 +49,9 @@ QUESTION_PROMPT = """你正在进行一场 {position} 岗位的面试。
     "question": "题目内容",
     "difficulty": "easy/medium/hard",
     "source": "kb/llm",
-    "knowledge_tags": ["知识点标签1", "知识点标签2"]
+    "knowledge_tags": ["知识点标签1", "知识点标签2"],
+    "topic": "从知识树中选择的 topic 名称",
+    "category": "从知识树中选择的 category 名称"
 }}"""
 
 EVALUATE_PROMPT = """请对面试者的回答进行评价。
@@ -142,11 +151,13 @@ class InterviewService:
         llm: LLMClient,
         faiss: Optional[FaissStore] = None,
         embedding: Optional[EmbeddingService] = None,
+        topic_tracker: Optional[TopicTracker] = None,
     ):
         self.store = store
         self.llm = llm
         self.faiss = faiss
         self.embedding = embedding
+        self.topic_tracker = topic_tracker
         self.max_rounds = 15
         self.min_rounds = 5
 
@@ -278,6 +289,24 @@ class InterviewService:
         # Retrieve knowledge base context
         kb_context = await self._retrieve_context(f"{position} 技术面试题 {difficulty}")
 
+        # --- Knowledge tree integration ---
+        coverage_text = ""
+        tree_text = ""
+        suggestion_text = ""
+        suggested_category = ""
+        if self.topic_tracker:
+            tree = self.topic_tracker.get_tree(position)
+            if tree:
+                coverage_text = self.topic_tracker.get_coverage_summary_text(session_id, position)
+                tree_text = self.topic_tracker.get_tree_structure_text(position)
+                suggestion = self.topic_tracker.get_next_suggestion(session_id, position)
+                if suggestion.get("topic"):
+                    suggested_category = suggestion.get("category", "")
+                    suggestion_text = (
+                        f"建议优先出题方向：{suggested_category} - {suggestion['topic']}\n"
+                        f"原因：{suggestion['reason']}"
+                    )
+
         prompt = QUESTION_PROMPT.format(
             position=position,
             round=round_num,
@@ -286,6 +315,10 @@ class InterviewService:
             last_evaluation_summary=last_eval_summary,
             knowledge_context=kb_context,
             难度提示=_difficulty_label(difficulty),
+            coverage_summary=coverage_text,
+            knowledge_tree_structure=tree_text,
+            suggested_topic=suggestion_text,
+            suggested_category=suggested_category,
         )
 
         text = await self.llm.chat(prompt, SYSTEM_START)
@@ -297,15 +330,22 @@ class InterviewService:
                 "difficulty": difficulty,
                 "source": "llm",
                 "knowledge_tags": [],
+                "topic": "",
+                "category": "",
             }
 
         question_text = parsed.get("question", text[:200])
         q_difficulty = parsed.get("difficulty", difficulty)
         q_source = parsed.get("source", "llm")
         knowledge_tags = parsed.get("knowledge_tags", [])
+        q_topic = parsed.get("topic", "") or ""
+        q_category = parsed.get("category", "") or ""
 
         # Store the question
-        q = self.store.add_question(session_id, round_num, question_text, q_difficulty, q_source)
+        q = self.store.add_question(
+            session_id, round_num, question_text, q_difficulty, q_source,
+            topic=q_topic, category=q_category,
+        )
 
         return {
             "id": q["id"],
@@ -314,6 +354,8 @@ class InterviewService:
             "difficulty": q_difficulty,
             "source": q_source,
             "knowledge_tags": knowledge_tags,
+            "topic": q_topic,
+            "category": q_category,
         }
 
     async def _retrieve_context(self, query: str) -> str:
