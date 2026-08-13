@@ -404,6 +404,8 @@ class InterviewService:
                 "question": q["question"][:80],
                 "score": score,
                 "tags": tags,
+                "topic": q.get("topic", "") or "",
+                "category": q.get("category", "") or "",
             })
 
         avg_score = round(total_score / len(questions), 1)
@@ -417,8 +419,53 @@ class InterviewService:
 
         text = await self.llm.chat(prompt)
         parsed = _parse_json(text)
+
+        # --- Topic analysis (no LLM needed) ---
+        topic_analysis = []
+        category_scores = {}
+        for q in q_details:
+            cat = q.get("category", "") or "其他"
+            if cat not in category_scores:
+                category_scores[cat] = {"scores": [], "topics": set()}
+            category_scores[cat]["scores"].append(q["score"])
+            if q.get("topic"):
+                category_scores[cat]["topics"].add(q["topic"])
+
+        for cat_name, data in category_scores.items():
+            avg = round(sum(data["scores"]) / len(data["scores"]), 1)
+            if avg >= 7:
+                status = "strong"
+            elif avg >= 5:
+                status = "moderate"
+            else:
+                status = "weak"
+            topic_analysis.append({
+                "category": cat_name,
+                "topics_covered": len(data["topics"]),
+                "avg_score": avg,
+                "status": status,
+            })
+
         if parsed:
             parsed["total_score"] = avg_score
+            parsed["topic_analysis"] = topic_analysis
+
+            # Generate recommended_study from topic_analysis
+            recommended = []
+            for ta in topic_analysis:
+                if ta["status"] == "weak":
+                    recommended.append({
+                        "category": ta["category"],
+                        "priority": "high",
+                        "reason": f"得分偏低（{ta['avg_score']}分），建议重点复习",
+                    })
+                elif ta["status"] == "moderate":
+                    recommended.append({
+                        "category": ta["category"],
+                        "priority": "medium",
+                        "reason": f"基础尚可（{ta['avg_score']}分），建议补充深度",
+                    })
+            parsed["recommended_study"] = recommended
             return parsed
 
         # Fallback report
@@ -428,4 +475,5 @@ class InterviewService:
             "knowledge_analysis": {"strengths": [], "weaknesses": []},
             "improvement_suggestions": ["报告生成失败，请重试"],
             "level": "中级" if avg_score >= 6 else "初级",
+            "topic_analysis": topic_analysis,
         }
