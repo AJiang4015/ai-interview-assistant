@@ -414,3 +414,181 @@ FTS5 搜索索引需要与消息表保持同步，且需要清理过期的会话
 
 **涉及文件**
 `app/storage/search_store.py` — `_init_db`（触发器 + 迁移）、`clear_all`（FTS5 rebuild）、`cleanup_expired`（新增方法）
+
+
+---
+
+### 响应缓存 Key 设计：命中率极低
+
+**问题描述**
+RAG 响应缓存的 `make_key` 方法使用 `md5(question | session_id | msg_count)` 作为缓存键。这意味着：
+
+- 同一个问题，不同会话 → **永远不命中**
+- 同一个问题，同一会话，不同轮次 → **永远不命中**（msg_count 变了）
+- 同一个问题，同一会话，同一轮次 → **命中**
+- 大小写/标点差异 → **永远不命中**
+
+在实际场景中，唯一可能命中的场景是：用户在同一个会话中、同一轮对话位置、一字不差地问同一个问题，且在此之后没有其他消息。这几乎不会发生，导致缓存命中率趋近于 0。
+
+```python
+# cache_service.py — 当前实现
+def make_key(self, question: str, session_id: str, msg_count: int) -> str:
+    raw = f"{question}|{session_id}|{msg_count}"
+    h = hashlib.md5(raw.encode("utf-8")).hexdigest()
+    return f"{self._prefix}{h}"
+```
+
+**根因分析**
+
+1. **过度保守的 key 设计**
+   - 加入 `session_id` 为了防止跨会话缓存污染（不同用户问"Redis 持久化"期望不同上下文）
+   - 加入 `msg_count` 为了防止多轮对话中上下文变化导致答案不合适
+   - 但这两个字段让 key 几乎变成唯一值，失去了缓存的意义
+
+2. **缓存粒度选错了层级**
+   - 当前缓存的是**LLM 生成后的最终答案**（response cache）
+   - 这个层级的答案高度依赖上下文（会话历史、知识库版本），天然难以复用
+   - 更合理的做法是缓存**检索结果**（retrieval cache），因为检索结果只依赖问题本身，与会话上下文无关
+
+3. **未做问题归一化**
+   - 原始问题文本直接参与 key 计算，没有去除大小写、标点、停用词等
+   - "Redis 持久化" 和 "redis 持久化 " 被看作两个不同的问题
+
+4. **轮次计数与上下文绑定**
+   - `msg_count` 不是衡量"上下文是否变化"的好指标
+   - 用户可能问了一个无关问题再回来追问，msg_count 变了但上下文没变
+   - 也可能 msg_count 没变但上下文变了（比如知识库更新了）
+
+**解决方案**
+
+方案一：缓存检索结果而非最终答案（推荐）
+
+```python
+class RetrievalCache:
+    """缓存检索结果，key 只依赖问题本身。"""
+
+    def make_key(self, question: str) -> str:
+        # 归一化：去空格、转小写、去标点
+        normalized = re.sub(r'[^\w\s]', '', question).lower().strip()
+        return f"cache:retrieval:{hashlib.md5(normalized.encode()).hexdigest()}"
+
+    async def get(self, key: str) -> list[RetrievalResult] | None:
+        data = await self._store.client.get(key)
+        return pickle.loads(data) if data else None
+
+    async def set(self, key: str, chunks: list[RetrievalResult], ttl: int = 3600):
+        await self._store.client.setex(key, ttl, pickle.dumps(chunks))
+```
+
+**为什么选择这个方案：**
+- 检索结果只依赖问题语义，不依赖会话上下文，key 可以大幅简化
+- 同一个问题在不同会话、不同轮次会命中同一个检索结果
+- 检索是 RAG 中最耗时的环节之一（Embedding + FAISS + BM25 + RRF），命中缓存能显著提速
+- LLM 生成仍然实时执行，保证答案能结合当前会话历史
+- 知识库更新时只需使检索缓存失效（TTL 到期或手动清除）
+
+方案二：简化 response cache key（次选）
+
+```python
+def make_key(self, question: str) -> str:
+    # 归一化 + 去 session_id + 去 msg_count
+    normalized = re.sub(r'[^\w\s]', '', question).lower().strip()
+    return f"cache:response:{hashlib.md5(normalized.encode()).hexdigest()}"
+```
+
+**为什么这是次选：**
+- 实现简单，改动最小
+- 但多轮对话中同一问题在不同上下文可能会得到不同答案，缓存可能返回过时回答
+- 适用场景：面试助手这种「一问一答、不依赖上下文」的简单场景
+
+方案三：检索缓存 + 响应缓存双层
+
+```
+第一层：检索缓存，key = md5(归一化问题)，TTL = 3600s
+第二层：响应缓存，key = md5(归一化问题 | 前 N 轮摘要)，TTL = 600s
+```
+
+**为什么是可选方案：**
+- 检索缓存覆盖大部分场景，响应缓存作为补充
+- 响应缓存的 key 加入"前 N 轮对话摘要"而非 msg_count，更准确反映上下文变化
+- 实现复杂，需要维护对话摘要，收益有限
+
+方案四：语义近似缓存
+
+```python
+def find_similar(self, question: str, threshold: float = 0.95) -> str | None:
+    """查找语义相似的已缓存问题。"""
+    q_vec = self._embedding.encode([question])[0]  # 复用 EmbeddingService
+    for cached_q, answer in self._cache_store.items():
+        c_vec = self._embedding.encode([cached_q])[0]
+        sim = np.dot(q_vec, c_vec) / (np.linalg.norm(q_vec) * np.linalg.norm(c_vec))
+        if sim >= threshold:
+            return answer
+    return None
+```
+
+**为什么暂不推荐：**
+- 每次查询都需要遍历所有缓存条目并计算相似度，O(n) 复杂度
+- Embedding 编码本身已有开销，再查一遍缓存得不偿失
+- 阈值难调：0.95 太高等于精确匹配，0.90 太低可能返回错误答案
+- 需要专门的向量存储来索引缓存问题，增加了系统复杂度
+
+**面试题**
+
+1. **"设计一个 RAG 系统的缓存策略"**
+   - 关键点：区分 retrieval cache 和 response cache 两个层级
+   - retrieval cache：key 只依赖问题，命中率高，存储检索结果 chunks
+   - response cache：key 依赖问题 + 上下文，命中率低，存储 LLM 最终答案
+   - 候选回答：优先实现 retrieval cache，response cache 作为补充
+
+2. **"缓存 key 应该包含哪些字段？为什么？"**
+   - 核心字段：归一化后的问题文本（去空格、转小写、去标点）
+   - 可选字段：知识库版本号（缓存失效时使用）
+   - 不应包含的字段：session_id（跨会话不共享）、msg_count（轮次变化不改变问题语义）
+   - 例外：多轮对话中如果问题依赖上下文（如"那它呢？"），需要包含上下文摘要
+
+3. **"如何平衡缓存命中率和答案准确性？"**
+   - 命中率 vs 准确性本质上是一对矛盾
+   - 方案：分层缓存——检索缓存用高命中率（长 TTL），响应缓存用低命中率（短 TTL）
+   - 检索缓存命中率高不影响准确性，因为 LLM 仍然实时生成答案
+   - 响应缓存只在问题完全一致且上下文无变化时命中
+
+4. **"知识库更新后如何使缓存失效？"**
+   - 检索缓存：知识库重建时递增版本号，key 中加入版本号，旧版本自动失效
+   - 响应缓存：TTL 到期自动失效，或手动清除所有 cache:* 前缀的 key
+   - 实现：`await redis_client.delete(*await redis_client.keys("cache:*"))`
+
+5. **"缓存穿透、缓存雪崩怎么处理？"**
+   - 缓存穿透（查询不存在的数据）：布隆过滤器提前判断，或缓存空结果（短 TTL）
+   - 缓存雪崩（大量缓存同时过期）：TTL 加入随机偏移量，避免集中过期
+   - 实现：`ttl = base_ttl + random.randint(0, 300)` 分散过期时间
+
+**开发问题与解决方法**
+
+| 问题 | 场景 | 解决方法 |
+|------|------|----------|
+| 缓存命中率趋近于 0 | key 包含 session_id + msg_count | 改用归一化问题作为 key，或缓存检索结果 |
+| 缓存污染 | 同一问题在不同上下文返回不同答案，后一个覆盖了前一个的缓存 | 检索缓存天然免疫此问题（检索结果不依赖上下文） |
+| 缓存与知识库不一致 | 知识库更新后，缓存的检索结果已经过时 | 知识库重建时递增版本号，加入 cache key |
+| 缓存雪崩 | 大量 key 在同一时间过期，请求全部打到 LLM | TTL 加入随机偏移量 |
+| 缓存穿透 | 故意问一个不存在于知识库的问题，每次都不命中缓存 | 缓存空结果（短 TTL） |
+| 内存压力 | 缓存条目过多，Redis 内存耗尽 | 设置 maxmemory-policy allkeys-lru，控制 TTL 不要过长 |
+| 序列化开销 | 检索结果包含大量文本，序列化/反序列化耗时 | 使用 pickle 而非 json（更高效），或压缩后存储 |
+
+**为什么当前选择方案一（检索缓存）**
+
+| 维度 | 检索缓存（推荐） | 响应缓存（当前） |
+|------|-----------------|-----------------|
+| 命中率 | 高（同一问题在不同会话都命中） | 极低（几乎不会命中） |
+| 存储对象 | 检索到的 chunks | LLM 生成的完整答案 |
+| 上下文依赖 | 不依赖会话上下文 | 强依赖会话上下文 |
+| 加速效果 | 消除检索阶段耗时（Embedding + FAISS + BM25 + RRF） | 消除 LLM 生成耗时 |
+| 实现复杂度 | 低（key 简化，无需上下文感知） | 低（但 key 设计不合理） |
+| 知识库更新影响 | 需要重建缓存 | 需要重建缓存 |
+| 适用场景 | 通用 RAG 场景 | 严格的一问一答、无上下文场景 |
+
+**结论：** 当前 response cache 的 key 设计过于保守，导致缓存形同虚设。推荐改为缓存检索结果（retrieval cache），key 仅依赖归一化后的问题文本，在保持实现简单的同时大幅提升缓存命中率。后续可考虑在检索缓存之上叠加响应缓存作为补充。
+
+**涉及文件**
+`app/services/cache_service.py` — `make_key` 方法（key 设计问题）
+`app/services/rag_service.py` — `stream_query` 方法（缓存检查 + 写入逻辑）

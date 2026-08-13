@@ -15,6 +15,7 @@ from app.services.resume_parser import ResumeParser
 from app.storage.faiss_store import FaissStore
 from app.services.embedding import EmbeddingService
 from app.storage.interview_store import InterviewStore
+from app.services.topic_tracker import TopicTracker
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,6 +38,12 @@ QUESTION_PROMPT = """你正在进行一场 {position} 岗位的面试。
 
 {knowledge_context}
 
+{coverage_summary}
+{suggested_topic}
+
+【知识树参考】
+{knowledge_tree_structure}
+
 请出一道{难度提示}技术面试题，混合技术知识点、项目经验或系统设计方向。
 题目应该是面试中常见的高质量题目。
 
@@ -45,7 +52,9 @@ QUESTION_PROMPT = """你正在进行一场 {position} 岗位的面试。
     "question": "题目内容",
     "difficulty": "easy/medium/hard",
     "source": "kb/llm",
-    "knowledge_tags": ["知识点标签1", "知识点标签2"]
+    "knowledge_tags": ["知识点标签1", "知识点标签2"],
+    "topic": "从知识树中选择的 topic 名称",
+    "category": "从知识树中选择的 category 名称"
 }}"""
 
 EVALUATE_PROMPT = """请对面试者的回答进行评价。
@@ -146,12 +155,14 @@ class InterviewService:
         faiss: Optional[FaissStore] = None,
         embedding: Optional[EmbeddingService] = None,
         resume_parser: Optional[ResumeParser] = None,
+        topic_tracker: Optional[TopicTracker] = None,
     ):
         self.store = store
         self.llm = llm
         self.faiss = faiss
         self.embedding = embedding
         self.resume_parser = resume_parser
+        self.topic_tracker = topic_tracker
         self.max_rounds = 15
         self.min_rounds = 5
 
@@ -362,6 +373,24 @@ class InterviewService:
 请基于以上分析，针对候选人的简历短板和岗位核心要求出题。
 """
 
+        # --- Knowledge tree integration ---
+        coverage_text = ""
+        tree_text = ""
+        suggestion_text = ""
+        suggested_category = ""
+        if self.topic_tracker:
+            tree = self.topic_tracker.get_tree(position)
+            if tree:
+                coverage_text = self.topic_tracker.get_coverage_summary_text(session_id, position)
+                tree_text = self.topic_tracker.get_tree_structure_text(position)
+                suggestion = self.topic_tracker.get_next_suggestion(session_id, position)
+                if suggestion.get("topic"):
+                    suggested_category = suggestion.get("category", "")
+                    suggestion_text = (
+                        f"建议优先出题方向：{suggested_category} - {suggestion['topic']}\n"
+                        f"原因：{suggestion['reason']}"
+                    )
+
         prompt = QUESTION_PROMPT.format(
             position=position,
             round=round_num,
@@ -370,6 +399,10 @@ class InterviewService:
             last_evaluation_summary=last_eval_summary,
             knowledge_context=kb_context + personalized_context,
             难度提示=_difficulty_label(difficulty),
+            coverage_summary=coverage_text,
+            knowledge_tree_structure=tree_text,
+            suggested_topic=suggestion_text,
+            suggested_category=suggested_category,
         )
 
         text = await self.llm.chat(prompt, SYSTEM_START)
@@ -381,15 +414,22 @@ class InterviewService:
                 "difficulty": difficulty,
                 "source": "llm",
                 "knowledge_tags": [],
+                "topic": "",
+                "category": "",
             }
 
         question_text = parsed.get("question", text[:200])
         q_difficulty = parsed.get("difficulty", difficulty)
         q_source = parsed.get("source", "llm")
         knowledge_tags = parsed.get("knowledge_tags", [])
+        q_topic = parsed.get("topic", "") or ""
+        q_category = parsed.get("category", "") or ""
 
         # Store the question
-        q = self.store.add_question(session_id, round_num, question_text, q_difficulty, q_source)
+        q = self.store.add_question(
+            session_id, round_num, question_text, q_difficulty, q_source,
+            topic=q_topic, category=q_category,
+        )
 
         return {
             "id": q["id"],
@@ -398,6 +438,8 @@ class InterviewService:
             "difficulty": q_difficulty,
             "source": q_source,
             "knowledge_tags": knowledge_tags,
+            "topic": q_topic,
+            "category": q_category,
         }
 
     async def _retrieve_context(self, query: str) -> str:
@@ -446,6 +488,8 @@ class InterviewService:
                 "question": q["question"][:80],
                 "score": score,
                 "tags": tags,
+                "topic": q.get("topic", "") or "",
+                "category": q.get("category", "") or "",
             })
 
         avg_score = round(total_score / len(questions), 1)
@@ -459,8 +503,53 @@ class InterviewService:
 
         text = await self.llm.chat(prompt)
         parsed = _parse_json(text)
+
+        # --- Topic analysis (no LLM needed) ---
+        topic_analysis = []
+        category_scores = {}
+        for q in q_details:
+            cat = q.get("category", "") or "其他"
+            if cat not in category_scores:
+                category_scores[cat] = {"scores": [], "topics": set()}
+            category_scores[cat]["scores"].append(q["score"])
+            if q.get("topic"):
+                category_scores[cat]["topics"].add(q["topic"])
+
+        for cat_name, data in category_scores.items():
+            avg = round(sum(data["scores"]) / len(data["scores"]), 1)
+            if avg >= 7:
+                status = "strong"
+            elif avg >= 5:
+                status = "moderate"
+            else:
+                status = "weak"
+            topic_analysis.append({
+                "category": cat_name,
+                "topics_covered": len(data["topics"]),
+                "avg_score": avg,
+                "status": status,
+            })
+
         if parsed:
             parsed["total_score"] = avg_score
+            parsed["topic_analysis"] = topic_analysis
+
+            # Generate recommended_study from topic_analysis
+            recommended = []
+            for ta in topic_analysis:
+                if ta["status"] == "weak":
+                    recommended.append({
+                        "category": ta["category"],
+                        "priority": "high",
+                        "reason": f"得分偏低（{ta['avg_score']}分），建议重点复习",
+                    })
+                elif ta["status"] == "moderate":
+                    recommended.append({
+                        "category": ta["category"],
+                        "priority": "medium",
+                        "reason": f"基础尚可（{ta['avg_score']}分），建议补充深度",
+                    })
+            parsed["recommended_study"] = recommended
             return parsed
 
         # Fallback report
@@ -470,4 +559,5 @@ class InterviewService:
             "knowledge_analysis": {"strengths": [], "weaknesses": []},
             "improvement_suggestions": ["报告生成失败，请重试"],
             "level": "中级" if avg_score >= 6 else "初级",
+            "topic_analysis": topic_analysis,
         }

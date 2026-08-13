@@ -1,0 +1,43 @@
+{
+  "position": "AI应用开发",
+  "version": "1.0",
+  "categories": [
+    {
+      "name": "Python基础",
+      "description": "数据类型、装饰器、生成器、异步",
+      "topics": [
+        { "name": "数据类型与特性", "difficulty": 2, "type": "原理题", "knowledge_points": ["可变/不可变", "列表推导", "生成器", "装饰器"], "prerequisites": [] },
+        { "name": "异步编程", "difficulty": 3, "type": "原理题", "knowledge_points": ["async/await", "事件循环", "协程", "asyncio"], "prerequisites": [] },
+        { "name": "GIL与多线程", "difficulty": 3, "type": "原理题", "knowledge_points": ["GIL原理", "多进程", "线程安全"], "prerequisites": [] }
+      ]
+    },
+    {
+      "name": "大模型基础",
+      "description": "Transformer、Prompt、RAG、Agent",
+      "topics": [
+        { "name": "Transformer架构", "difficulty": 3, "type": "原理题", "knowledge_points": ["Self-Attention", "多头注意力", "位置编码", "LayerNorm"], "prerequisites": [] },
+        { "name": "Prompt Engineering", "difficulty": 2, "type": "实操题", "knowledge_points": ["Few-shot", "Chain-of-Thought", "System Prompt", "输出格式化"], "prerequisites": [] },
+        { "name": "RAG技术", "difficulty": 3, "type": "设计题", "knowledge_points": ["Embedding", "向量检索", "Chunk策略", "重排序"], "prerequisites": ["Transformer架构"] },
+        { "name": "Agent", "difficulty": 4, "type": "设计题", "knowledge_points": ["ReAct", "工具调用", "记忆", "多Agent协作"], "prerequisites": ["Prompt Engineering", "RAG技术"] }
+      ]
+    },
+    {
+      "name": "模型部署与服务",
+      "description": "vLLM、量化、推理优化、API服务",
+      "topics": [
+        { "name": "推理优化", "difficulty": 3, "type": "原理题", "knowledge_points": ["KV Cache", "Flash Attention", "连续批处理", "量化"], "prerequisites": ["Transformer架构"] },
+        { "name": "vLLM与Serving", "difficulty": 3, "type": "实操题", "knowledge_points": ["PageAttention", "Prefix Caching", "OpenAI兼容API"], "prerequisites": ["推理优化"] },
+        { "name": "模型微调", "difficulty": 4, "type": "实操题", "knowledge_points": ["LoRA", "QLoRA", "数据集构建", "SFT/RLHF"], "prerequisites": ["Transformer架构"] }
+      ]
+    },
+    {
+      "name": "AI工程化",
+      "description": "数据处理、评估、监控、CI/CD",
+      "topics": [
+        { "name": "数据处理流程", "difficulty": 2, "type": "实操题", "knowledge_points": ["数据清洗", "标注", "增强", "质量评估"], "prerequisites": [] },
+        { "name": "模型评估", "difficulty": 3, "type": "原理题", "knowledge_points": ["Benchmark", "BLEU/ROUGE", "人工评估", "A/B测试"], "prerequisites": [] },
+        { "name": "AI应用监控", "difficulty": 3, "type": "设计题", "knowledge_points": ["Token计量", "延迟追踪", "质量监控", "告警"], "prerequisites": ["模型评估"] }
+      ]
+    }
+  ]
+}

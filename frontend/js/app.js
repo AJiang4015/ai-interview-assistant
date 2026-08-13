@@ -15,7 +15,8 @@ const els = {
     views: {
         chat: document.getElementById('view-chat'),
         index: document.getElementById('view-index'),
-        docs: document.getElementById('view-docs')
+        docs: document.getElementById('view-docs'),
+        interview: document.getElementById('view-interview')
     },
     dotFaiss: document.getElementById('dot-faiss'),
     dotEmbedding: document.getElementById('dot-embedding'),
@@ -1451,6 +1452,12 @@ const interviewEls = {
     round: document.getElementById('interview-round'),
     difficulty: document.getElementById('interview-difficulty'),
     questionText: document.getElementById('question-text'),
+    questionTags: document.getElementById('question-tags'),
+    tagCategory: document.getElementById('tag-category'),
+    tagTopic: document.getElementById('tag-topic'),
+    coverageStats: document.getElementById('coverage-stats'),
+    coverageCount: document.getElementById('coverage-count'),
+    coverageBars: document.getElementById('coverage-bars'),
     answerInput: document.getElementById('answer-input'),
     btnSubmit: document.getElementById('btn-submit-answer'),
     btnStart: document.getElementById('btn-start-interview'),
@@ -1467,6 +1474,10 @@ const interviewEls = {
     reportStrengths: document.getElementById('report-strengths'),
     reportWeaknesses: document.getElementById('report-weaknesses'),
     reportSuggestions: document.getElementById('report-suggestions'),
+    reportTopicSection: document.getElementById('report-topic-section'),
+    topicAnalysis: document.getElementById('topic-analysis'),
+    reportStudySection: document.getElementById('report-study-section'),
+    recommendedStudy: document.getElementById('recommended-study'),
     btnNew: document.getElementById('btn-new-interview'),
     btnHistory: document.getElementById('btn-view-history'),
     positionBtns: document.querySelectorAll('.position-btn'),
@@ -1694,6 +1705,63 @@ function showInterviewProgress(question) {
     interviewEls.btnSubmit.disabled = true;
     interviewEls.btnSubmit.textContent = '提交回答';
     interviewEls.answerInput.focus();
+
+    // 显示 topic/category 标签
+    if (question.topic || question.category) {
+        interviewEls.questionTags.style.display = 'flex';
+        interviewEls.tagCategory.textContent = question.category || '';
+        interviewEls.tagTopic.textContent = question.topic || '';
+    } else {
+        interviewEls.questionTags.style.display = 'none';
+    }
+
+    // 获取并显示覆盖统计
+    if (interviewState.sessionId) {
+        fetchCoverageStats(interviewState.sessionId, interviewState.position);
+    }
+}
+
+async function fetchCoverageStats(sessionId, position) {
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/coverage?session_id=${encodeURIComponent(sessionId)}&position=${encodeURIComponent(position)}`);
+        if (!res.ok) {
+            interviewEls.coverageStats.style.display = 'none';
+            return;
+        }
+        const data = await res.json();
+        renderCoverageStats(data);
+    } catch (e) {
+        interviewEls.coverageStats.style.display = 'none';
+    }
+}
+
+function renderCoverageStats(coverage) {
+    const categories = coverage.categories || {};
+    const keys = Object.keys(categories);
+    if (keys.length === 0) {
+        interviewEls.coverageStats.style.display = 'none';
+        return;
+    }
+
+    interviewEls.coverageStats.style.display = 'block';
+    interviewEls.coverageCount.textContent = `${coverage.total_covered || 0}/${coverage.total_topics || 0}`;
+
+    interviewEls.coverageBars.innerHTML = keys.map(catName => {
+        const info = categories[catName];
+        const pct = info.total > 0 ? Math.round((info.covered / info.total) * 100) : 0;
+        const status = pct === 100 ? 'done' : pct > 0 ? 'partial' : 'empty';
+        return `
+            <div class="coverage-item">
+                <div class="coverage-item-header">
+                    <span class="coverage-item-name">${escapeHtml(catName)}</span>
+                    <span class="coverage-item-count">${info.covered}/${info.total}</span>
+                </div>
+                <div class="coverage-bar">
+                    <div class="coverage-bar-fill ${status}" style="width:${pct}%"></div>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 function showInterviewReady() {
@@ -1756,6 +1824,53 @@ function showInterviewReport(report, position) {
     interviewEls.reportSuggestions.innerHTML = (report.improvement_suggestions || []).map(s =>
         `<li>${escapeHtml(s)}</li>`
     ).join('');
+
+    // topic_analysis 知识分类分析
+    if (report.topic_analysis && report.topic_analysis.length > 0) {
+        interviewEls.reportTopicSection.style.display = 'block';
+        interviewEls.topicAnalysis.innerHTML = report.topic_analysis.map(ta => {
+            const statusLabel = ta.status === 'strong' ? '掌握较好' : ta.status === 'moderate' ? '基础尚可' : '需要加强';
+            const statusClass = ta.status === 'strong' ? 'ta-strong' : ta.status === 'moderate' ? 'ta-moderate' : 'ta-weak';
+            const pct = Math.round((ta.avg_score / 10) * 100);
+            return `
+                <div class="ta-item">
+                    <div class="ta-header">
+                        <span class="ta-category">${escapeHtml(ta.category)}</span>
+                        <span class="ta-badge ${statusClass}">${statusLabel}</span>
+                    </div>
+                    <div class="ta-bar">
+                        <div class="ta-bar-fill ${statusClass}" style="width:${pct}%"></div>
+                    </div>
+                    <div class="ta-meta">
+                        <span>覆盖 ${ta.topics_covered} 个知识点</span>
+                        <span>均分 ${ta.avg_score}/10</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } else {
+        interviewEls.reportTopicSection.style.display = 'none';
+    }
+
+    // recommended_study 学习建议
+    if (report.recommended_study && report.recommended_study.length > 0) {
+        interviewEls.reportStudySection.style.display = 'block';
+        interviewEls.recommendedStudy.innerHTML = report.recommended_study.map(rs => {
+            const priorityLabel = rs.priority === 'high' ? '高优先级' : '中优先级';
+            const priorityClass = rs.priority === 'high' ? 'rs-high' : 'rs-medium';
+            return `
+                <div class="rs-item">
+                    <div class="rs-header">
+                        <span class="rs-category">${escapeHtml(rs.category)}</span>
+                        <span class="rs-priority ${priorityClass}">${priorityLabel}</span>
+                    </div>
+                    <div class="rs-reason">${escapeHtml(rs.reason)}</div>
+                </div>
+            `;
+        }).join('');
+    } else {
+        interviewEls.reportStudySection.style.display = 'none';
+    }
 }
 
 function resetInterview() {

@@ -2131,6 +2131,180 @@ body {
     padding-top: 24px;
     border-top: 1px solid var(--border);
 }
+
+/* ============ Question Tags ============ */
+.question-tags {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.tag-category {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    background: rgba(96, 84, 241, 0.15);
+    color: #7b6ff2;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+.tag-topic {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    background: rgba(212, 169, 90, 0.12);
+    color: var(--accent);
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* ============ Coverage Stats ============ */
+.coverage-stats {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    animation: fadeIn 0.3s ease;
+}
+.coverage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.coverage-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.coverage-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+.coverage-item {
+    margin-bottom: 8px;
+}
+.coverage-item:last-child {
+    margin-bottom: 0;
+}
+.coverage-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+.coverage-item-name {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.coverage-item-count {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.coverage-bar {
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.coverage-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+}
+.coverage-bar-fill.done { background: var(--success); }
+.coverage-bar-fill.partial { background: var(--accent); }
+.coverage-bar-fill.empty { background: var(--error); }
+
+/* ============ Topic Analysis ============ */
+.ta-item {
+    padding: 12px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+}
+.ta-item:last-child { margin-bottom: 0; }
+.ta-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.ta-category {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.ta-badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+}
+.ta-badge.ta-strong { background: rgba(74, 222, 128, 0.15); color: var(--success); }
+.ta-badge.ta-moderate { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+.ta-badge.ta-weak { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+.ta-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+.ta-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease;
+}
+.ta-bar-fill.ta-strong { background: var(--success); }
+.ta-bar-fill.ta-moderate { background: var(--warning); }
+.ta-bar-fill.ta-weak { background: var(--error); }
+.ta-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* ============ Recommended Study ============ */
+.rs-item {
+    padding: 12px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+}
+.rs-item:last-child { margin-bottom: 0; }
+.rs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.rs-category {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.rs-priority {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+}
+.rs-priority.rs-high { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+.rs-priority.rs-medium { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+.rs-reason {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }

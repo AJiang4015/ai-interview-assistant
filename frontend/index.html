@@ -330,6 +330,10 @@
                     <div class="interview-body" id="interview-body">
                         <!-- 题目区域 -->
                         <div class="interview-question-card" id="question-card">
+                            <div class="question-tags" id="question-tags" style="display:none;">
+                                <span class="tag-category" id="tag-category"></span>
+                                <span class="tag-topic" id="tag-topic"></span>
+                            </div>
                             <div class="question-content" id="question-content">
                                 <p id="question-text">加载中...</p>
                             </div>
@@ -355,6 +359,15 @@
                             </div>
                             <div class="evaluation-comment" id="evaluation-comment"></div>
                             <div class="evaluation-tags" id="evaluation-tags"></div>
+                        </div>
+
+                        <!-- 知识点覆盖统计 -->
+                        <div class="coverage-stats" id="coverage-stats" style="display:none;">
+                            <div class="coverage-header">
+                                <span class="coverage-title">知识点覆盖</span>
+                                <span class="coverage-count" id="coverage-count">0/0</span>
+                            </div>
+                            <div class="coverage-bars" id="coverage-bars"></div>
                         </div>
                     </div>
                 </div>
@@ -404,6 +417,16 @@
                         <div class="report-section">
                             <h3>改进建议</h3>
                             <ul class="report-suggestions" id="report-suggestions"></ul>
+                        </div>
+
+                        <div class="report-section" id="report-topic-section" style="display:none;">
+                            <h3>知识分类分析</h3>
+                            <div class="topic-analysis" id="topic-analysis"></div>
+                        </div>
+
+                        <div class="report-section" id="report-study-section" style="display:none;">
+                            <h3>学习建议</h3>
+                            <div class="recommended-study" id="recommended-study"></div>
                         </div>
 
                         <div class="report-actions">

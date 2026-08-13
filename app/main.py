@@ -16,6 +16,7 @@ from app.services.index_service import IndexService
 from app.services.auth_service import AuthService
 from app.services.interview_service import InterviewService
 from app.services.resume_parser import ResumeParser
+from app.services.topic_tracker import TopicTracker
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
 from app.storage.session_store import SessionStore
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
 
     # 重排序
     rerank_service = RerankService(
+        api_key=settings.siliconflow_api_key,
         model_name=settings.rerank_model,
         enabled=settings.enable_rerank,
     )
@@ -131,9 +133,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize interview service
     interview_store = InterviewStore()
+    topic_tracker = TopicTracker(interview_store=interview_store)
     interview_service = InterviewService(
         interview_store, llm_client, faiss_store, embedding_service,
         resume_parser=resume_parser,
+        topic_tracker=topic_tracker,
     )
 
     idx_path = Path(settings.idx_path)

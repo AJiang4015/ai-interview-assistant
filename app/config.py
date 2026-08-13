@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
 # RAG pipeline 配置
     rerank_top_k: int = 5
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_model: str = "Qwen/Qwen3-Reranker-4B"
     enable_query_rewrite: bool = True
     enable_hybrid_search: bool = True
     enable_rerank: bool = True

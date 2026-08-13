@@ -1,0 +1,87 @@
+{
+  "position": "Java后端",
+  "version": "1.0",
+  "categories": [
+    {
+      "name": "Java基础",
+      "description": "数据类型、面向对象、异常、泛型、反射",
+      "topics": [
+        { "name": "数据类型与包装类", "difficulty": 2, "type": "原理题", "knowledge_points": ["自动装箱", "缓存池", "String不可变性"], "prerequisites": [] },
+        { "name": "面向对象", "difficulty": 2, "type": "原理题", "knowledge_points": ["封装", "继承", "多态", "接口与抽象类"], "prerequisites": [] },
+        { "name": "泛型", "difficulty": 3, "type": "原理题", "knowledge_points": ["类型擦除", "通配符", "桥接方法"], "prerequisites": ["面向对象"] },
+        { "name": "反射", "difficulty": 3, "type": "原理题", "knowledge_points": ["Class对象", "MethodHandle", "动态代理"], "prerequisites": ["类加载"] }
+      ]
+    },
+    {
+      "name": "Java集合",
+      "description": "Collection框架、Map、线程安全集合",
+      "topics": [
+        { "name": "ArrayList与LinkedList", "difficulty": 2, "type": "原理题", "knowledge_points": ["数组", "链表", "扩容机制", "随机访问"], "prerequisites": [] },
+        { "name": "HashMap", "difficulty": 3, "type": "原理题", "knowledge_points": ["数组", "链表", "红黑树", "扩容", "哈希冲突"], "prerequisites": [] },
+        { "name": "ConcurrentHashMap", "difficulty": 4, "type": "原理题", "knowledge_points": ["分段锁", "CAS", "synchronized", "并发扩容"], "prerequisites": ["HashMap"] },
+        { "name": "TreeMap与LinkedHashMap", "difficulty": 3, "type": "原理题", "knowledge_points": ["红黑树", "LRU", "插入顺序"], "prerequisites": ["HashMap"] }
+      ]
+    },
+    {
+      "name": "JVM",
+      "description": "内存模型、GC、类加载、性能调优",
+      "topics": [
+        { "name": "内存模型", "difficulty": 3, "type": "原理题", "knowledge_points": ["堆", "栈", "方法区", "直接内存", "OOM"], "prerequisites": [] },
+        { "name": "GC", "difficulty": 4, "type": "原理题", "knowledge_points": ["可达性分析", "GC算法", "CMS", "G1", "ZGC"], "prerequisites": ["内存模型"] },
+        { "name": "类加载", "difficulty": 3, "type": "原理题", "knowledge_points": ["双亲委派", "打破双亲委派", "自定义类加载器"], "prerequisites": [] },
+        { "name": "JVM调优", "difficulty": 4, "type": "实操题", "knowledge_points": ["堆参数", "GC日志", "MAT分析", "CPU飙高排查"], "prerequisites": ["内存模型", "GC"] }
+      ]
+    },
+    {
+      "name": "并发",
+      "description": "线程、锁、AQS、线程池、并发工具",
+      "topics": [
+        { "name": "synchronized", "difficulty": 3, "type": "原理题", "knowledge_points": ["对象头", "偏向锁", "轻量锁", "锁升级"], "prerequisites": [] },
+        { "name": "volatile", "difficulty": 3, "type": "原理题", "knowledge_points": ["可见性", "有序性", "happens-before", "内存屏障"], "prerequisites": [] },
+        { "name": "CAS", "difficulty": 3, "type": "原理题", "knowledge_points": ["ABA问题", "Unsafe", "原子类"], "prerequisites": ["volatile"] },
+        { "name": "AQS", "difficulty": 4, "type": "原理题", "knowledge_points": ["CLH队列", "ReentrantLock", "CountDownLatch", "Semaphore"], "prerequisites": ["CAS"] },
+        { "name": "线程池", "difficulty": 3, "type": "原理题", "knowledge_points": ["核心参数", "拒绝策略", "ThreadPoolExecutor", "ForkJoinPool"], "prerequisites": [] }
+      ]
+    },
+    {
+      "name": "Spring",
+      "description": "IOC、AOP、事务、Spring Boot",
+      "topics": [
+        { "name": "IOC容器", "difficulty": 3, "type": "原理题", "knowledge_points": ["Bean生命周期", "依赖注入", "循环依赖", "三级缓存"], "prerequisites": [] },
+        { "name": "AOP", "difficulty": 3, "type": "原理题", "knowledge_points": ["动态代理", "CGLIB", "切面", "通知类型"], "prerequisites": ["反射"] },
+        { "name": "事务", "difficulty": 3, "type": "原理题", "knowledge_points": ["@Transactional", "传播行为", "隔离级别", "失效场景"], "prerequisites": ["AOP", "MySQL事务"] },
+        { "name": "Spring Boot自动配置", "difficulty": 3, "type": "原理题", "knowledge_points": ["@EnableAutoConfiguration", "Conditional", "Starter机制"], "prerequisites": ["IOC容器"] }
+      ]
+    },
+    {
+      "name": "MySQL",
+      "description": "存储引擎、索引、事务、锁、优化",
+      "topics": [
+        { "name": "存储引擎", "difficulty": 2, "type": "原理题", "knowledge_points": ["InnoDB", "MyISAM", "B+树", "聚簇索引"], "prerequisites": [] },
+        { "name": "索引优化", "difficulty": 3, "type": "实操题", "knowledge_points": ["联合索引", "覆盖索引", "索引下推", "Explain"], "prerequisites": ["存储引擎"] },
+        { "name": "MySQL事务", "difficulty": 3, "type": "原理题", "knowledge_points": ["ACID", "隔离级别", "MVCC", "Next-Key Lock"], "prerequisites": [] },
+        { "name": "SQL优化", "difficulty": 3, "type": "实操题", "knowledge_points": ["慢查询", "分页优化", "JOIN优化", "数据类型选择"], "prerequisites": ["索引优化"] }
+      ]
+    },
+    {
+      "name": "Redis",
+      "description": "数据结构、持久化、集群、缓存",
+      "topics": [
+        { "name": "数据结构", "difficulty": 2, "type": "原理题", "knowledge_points": ["String", "Hash", "ZSet", "底层编码"], "prerequisites": [] },
+        { "name": "持久化", "difficulty": 3, "type": "原理题", "knowledge_points": ["RDB", "AOF", "混合持久化"], "prerequisites": [] },
+        { "name": "缓存设计", "difficulty": 3, "type": "设计题", "knowledge_points": ["穿透", "击穿", "雪崩", "一致性"], "prerequisites": [] },
+        { "name": "集群", "difficulty": 4, "type": "原理题", "knowledge_points": ["主从", "哨兵", "Cluster", "分片"], "prerequisites": ["持久化"] }
+      ]
+    },
+    {
+      "name": "操作系统与网络",
+      "description": "进程、线程、IO、TCP、HTTP",
+      "topics": [
+        { "name": "进程与线程", "difficulty": 2, "type": "原理题", "knowledge_points": ["PCB", "上下文切换", "用户态/内核态"], "prerequisites": [] },
+        { "name": "IO模型", "difficulty": 3, "type": "原理题", "knowledge_points": ["BIO", "NIO", "AIO", "多路复用", "零拷贝"], "prerequisites": ["进程与线程"] },
+        { "name": "TCP", "difficulty": 3, "type": "原理题", "knowledge_points": ["三次握手", "四次挥手", "拥塞控制", "粘包"], "prerequisites": [] },
+        { "name": "HTTP", "difficulty": 2, "type": "原理题", "knowledge_points": ["状态码", "HTTPS", "HTTP/2", "HTTP/3"], "prerequisites": ["TCP"] }
+      ]
+    }
+  ]
+}
