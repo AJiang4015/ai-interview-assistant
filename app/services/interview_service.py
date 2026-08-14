@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import UploadFile
 
 from app.services.llm_client import LLMClient
+from app.services.interview_agent import InterviewPlanner, PlannerContext
 from app.services.resume_parser import ResumeParser
 from app.storage.faiss_store import FaissStore
 from app.services.embedding import EmbeddingService
@@ -165,6 +166,7 @@ class InterviewService:
         self.topic_tracker = topic_tracker
         self.max_rounds = 15
         self.min_rounds = 5
+        self.planner = InterviewPlanner()
 
     async def start(
         self,
@@ -278,7 +280,10 @@ class InterviewService:
         should_end = evaluation.get("should_end", False)
         total_rounds = session["total_rounds"] or 0
 
-        if should_end or total_rounds >= self.max_rounds:
+        if self._decide_action(
+            mode="interview", total_answered=total_rounds,
+            should_end=should_end, last_evaluation=evaluation,
+        ) == "generate_report":
             # End the interview
             report = await self._generate_report(session_id)
             self.store.complete_session(session_id, report)
@@ -316,6 +321,18 @@ class InterviewService:
             "next_question": next_q,
             "session_id": session_id,
         }
+
+    def _decide_action(self, mode: str, total_answered: int, should_end: bool, last_evaluation: dict | None) -> str:
+        """构建 PlannerContext 并让 Planner 决策下一动作（ask_question / generate_report）。"""
+        ctx = PlannerContext(
+            mode=mode,
+            total_answered=total_answered,
+            max_rounds=self.max_rounds,
+            should_end=should_end,
+            last_evaluation=last_evaluation,
+            pending_evaluation=False,
+        )
+        return self.planner.decide(ctx)
 
     async def end(self, session_id: str) -> dict:
         """Force-end an interview and generate report."""
