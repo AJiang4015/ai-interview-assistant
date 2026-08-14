@@ -321,6 +321,23 @@
                                 <textarea id="jd-input" class="jd-textarea" placeholder="粘贴招聘JD内容..." rows="4"></textarea>
                             </div>
                         </div>
+                        <div class="deepdive-mode">
+                            <div class="resume-jd-divider"><span>项目深挖（可选）</span></div>
+                            <p class="deepdive-hint">上传简历，识别项目技术点，由"恶劣面试官"逐层追问，检验真实掌握程度。</p>
+                            <label class="resume-jd-label">上传简历</label>
+                            <div class="resume-upload-zone" id="dd-resume-zone">
+                                <div class="resume-upload-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+                                <p class="resume-upload-text">拖拽PDF简历到此处，或 <span class="resume-upload-link">点击选择文件</span></p>
+                                <input type="file" id="dd-resume-input" hidden accept=".pdf">
+                            </div>
+                            <div class="dd-project-select" id="dd-project-select" style="display:none;">
+                                <label class="resume-jd-label">选择项目</label>
+                                <div class="position-options" id="dd-project-options"></div>
+                                <label class="resume-jd-label" style="margin-top:10px;">选择技术点</label>
+                                <div class="position-options" id="dd-tech-options"></div>
+                                <button class="btn-primary" id="btn-start-deepdive" disabled>开始深挖</button>
+                            </div>
+                        </div>
                         <button class="btn-primary btn-start-interview" id="btn-start-interview" disabled>
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2l10 6-10 6V2z" fill="currentColor"/></svg>
                             开始面试
@@ -386,6 +403,11 @@
                                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                                     结束面试
                                 </button>
+                            </div>
+                            <div class="evaluation-actions" id="dd-actions" style="display:none;">
+                                <button class="btn-primary" id="btn-dd-continue">继续追问</button>
+                                <button class="btn-secondary" id="btn-dd-switch">换个技术点</button>
+                                <button class="btn-secondary" id="btn-dd-end">结束深挖</button>
                             </div>
                         </div>
 

@@ -1668,6 +1668,7 @@ async function startInterview() {
 }
 
 async function submitAnswer() {
+    if (ddState.mode) { return submitDeepDiveAnswer(); }
     const answer = interviewEls.answerInput.value.trim();
     if (!answer || interviewState.isSubmitting) return;
 
@@ -2160,3 +2161,228 @@ if (reviewEls.btnRefreshHistory) {
 if (reviewEls.btnTodayRefresh) {
     reviewEls.btnTodayRefresh.addEventListener('click', loadToday);
 }
+
+// ============ Deep Dive Module ============
+const ddState = {
+    projects: [], selectedProject: null, selectedTech: '',
+    sessionId: null, currentQuestionId: null, nextQuestion: null,
+    mode: false, isSubmitting: false,
+};
+const ddEls = {
+    zone: document.getElementById('dd-resume-zone'),
+    input: document.getElementById('dd-resume-input'),
+    projectSelect: document.getElementById('dd-project-select'),
+    projectOptions: document.getElementById('dd-project-options'),
+    techOptions: document.getElementById('dd-tech-options'),
+    btnStart: document.getElementById('btn-start-deepdive'),
+    actions: document.getElementById('dd-actions'),
+    btnContinue: document.getElementById('btn-dd-continue'),
+    btnSwitch: document.getElementById('btn-dd-switch'),
+    btnEnd: document.getElementById('btn-dd-end'),
+};
+
+function initDeepDive() {
+    if (!ddEls.zone) return;
+    ddEls.zone.addEventListener('click', () => ddEls.input.click());
+    ddEls.zone.addEventListener('dragover', e => { e.preventDefault(); ddEls.zone.classList.add('dragover'); });
+    ddEls.zone.addEventListener('dragleave', () => ddEls.zone.classList.remove('dragover'));
+    ddEls.zone.addEventListener('drop', e => { e.preventDefault(); ddEls.zone.classList.remove('dragover'); handleDDUpload(e.dataTransfer.files[0]); });
+    ddEls.input.addEventListener('change', e => { handleDDUpload(e.target.files[0]); e.target.value = ''; });
+    ddEls.btnStart.addEventListener('click', startDeepDive);
+    ddEls.btnContinue.addEventListener('click', ddContinue);
+    ddEls.btnSwitch.addEventListener('click', ddSwitchTech);
+    ddEls.btnEnd.addEventListener('click', endDeepDive);
+}
+
+async function handleDDUpload(file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('resume_file', file);
+    showToast('正在解析简历...', 'info');
+    try {
+        const res = await fetch('/api/deepdive/analyze', { method: 'POST', body: formData });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        ddState.projects = data.projects || [];
+        renderDDProjects();
+    } catch (e) {
+        showToast('简历解析失败: ' + e.message, 'error');
+    }
+}
+
+function renderDDProjects() {
+    ddEls.projectSelect.style.display = 'block';
+    if (ddState.projects.length === 0) {
+        ddEls.projectOptions.innerHTML = '<span class="deepdive-hint">未识别到项目，请检查简历内容。</span>';
+        return;
+    }
+    ddEls.projectOptions.innerHTML = ddState.projects.map((p, i) =>
+        `<button class="position-btn dd-option" data-i="${i}">${escapeHtml(p.name)}</button>`
+    ).join('');
+    ddEls.projectOptions.querySelectorAll('.dd-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            ddEls.projectOptions.querySelectorAll('.dd-option').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            ddState.selectedProject = ddState.projects[btn.dataset.i];
+            renderDDTechs();
+        });
+    });
+}
+
+function renderDDTechs() {
+    const techs = (ddState.selectedProject && ddState.selectedProject.technologies) || [];
+    ddEls.techOptions.innerHTML = techs.map(t =>
+        `<button class="position-btn dd-option" data-t="${escapeHtml(t)}">${escapeHtml(t)}</button>`
+    ).join('');
+    ddEls.techOptions.querySelectorAll('.dd-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            ddEls.techOptions.querySelectorAll('.dd-option').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            ddState.selectedTech = btn.dataset.t;
+            ddEls.btnStart.disabled = false;
+        });
+    });
+}
+
+async function startDeepDive() {
+    if (!ddState.selectedTech) return;
+    showInterviewLoading('恶劣面试官正在酝酿第一个问题...');
+    try {
+        const res = await fetch('/api/deepdive/start', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_name: ddState.selectedProject.name,
+                tech_point: ddState.selectedTech,
+                description: ddState.selectedProject.description || ''
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '启动失败');
+        }
+        const data = await res.json();
+        ddState.sessionId = data.session_id;
+        ddState.currentQuestionId = data.question.id;
+        ddState.mode = true;
+        showDeepDiveQuestion(data.question);
+    } catch (e) {
+        showToast('深挖启动失败: ' + e.message, 'error');
+        showInterviewReady();
+    }
+}
+
+function showDeepDiveQuestion(question) {
+    ddState.currentQuestionId = question.id;
+    ddState.round = question.round || 1;
+    interviewEls.ready.style.display = 'none';
+    interviewEls.loading.style.display = 'none';
+    interviewEls.report.style.display = 'none';
+    interviewEls.progress.style.display = 'flex';
+    interviewEls.positionBadge.textContent = ddState.selectedTech || '项目深挖';
+    interviewEls.round.textContent = `第 ${question.round || 1} 层`;
+    interviewEls.difficulty.textContent = '';
+    interviewEls.questionText.textContent = question.question || '';
+    interviewEls.answerInput.value = '';
+    interviewEls.answerInput.disabled = false;
+    interviewEls.btnSubmit.disabled = true;
+    interviewEls.btnSubmit.textContent = '提交回答';
+    interviewEls.questionTags.style.display = 'none';
+    interviewEls.coverageStats.style.display = 'none';
+    interviewEls.evaluationArea.style.display = 'none';
+    ddEls.actions.style.display = 'none';
+    interviewEls.answerInput.focus();
+}
+
+function showDeepDiveEvaluation(judgment) {
+    interviewEls.evaluationArea.style.display = 'block';
+    interviewEls.evaluationScore.textContent = `${judgment.score || 0}/10`;
+    interviewEls.evaluationComment.textContent = judgment.judgment || '已记录回答';
+    interviewEls.evaluationTags.innerHTML = '';
+    ddEls.actions.style.display = 'flex';
+    interviewEls.evaluationArea.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function submitDeepDiveAnswer() {
+    const answer = interviewEls.answerInput.value.trim();
+    if (!answer || ddState.isSubmitting) return;
+    ddState.isSubmitting = true;
+    interviewEls.btnSubmit.disabled = true;
+    interviewEls.btnSubmit.textContent = '评价中...';
+    interviewEls.answerInput.disabled = true;
+    try {
+        const res = await fetch('/api/deepdive/answer', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_id: ddState.currentQuestionId, answer, action: 'continue' })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '提交回答失败');
+        }
+        const data = await res.json();
+        ddState.isSubmitting = false;
+        interviewEls.btnSubmit.textContent = '提交回答';
+        if (data.is_complete) {
+            showDeepDiveSummary(data.summary);
+        } else {
+            ddState.nextQuestion = data.next_question;
+            showDeepDiveEvaluation(data.judgment);
+        }
+    } catch (e) {
+        showToast('提交失败: ' + e.message, 'error');
+        ddState.isSubmitting = false;
+        interviewEls.btnSubmit.textContent = '提交回答';
+        interviewEls.btnSubmit.disabled = false;
+        interviewEls.answerInput.disabled = false;
+    }
+}
+
+function ddContinue() {
+    if (!ddState.nextQuestion) return;
+    showDeepDiveQuestion(ddState.nextQuestion);
+}
+
+function ddSwitchTech() {
+    ddState.mode = false;
+    ddState.nextQuestion = null;
+    ddState.sessionId = null;
+    showInterviewReady();
+}
+
+async function endDeepDive() {
+    if (!ddState.sessionId) { showInterviewReady(); return; }
+    showInterviewLoading('正在生成深挖总结...');
+    try {
+        const res = await fetch('/api/deepdive/end', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: ddState.sessionId })
+        });
+        if (!res.ok) throw new Error('结束失败');
+        const data = await res.json();
+        showDeepDiveSummary(data.summary);
+    } catch (e) {
+        showToast('结束失败: ' + e.message, 'error');
+    }
+}
+
+function showDeepDiveSummary(summary) {
+    interviewEls.loading.style.display = 'none';
+    interviewEls.progress.style.display = 'none';
+    interviewEls.ready.style.display = 'none';
+    interviewEls.report.style.display = 'flex';
+    interviewEls.reportPosition.textContent = '项目深挖总结';
+    interviewEls.reportScore.textContent = '-';
+    interviewEls.reportLevel.textContent = '深挖完成';
+    interviewEls.reportScores.innerHTML = '';
+    const keyPoints = (summary.key_points || []).map(k => `<li>${escapeHtml(k)}</li>`).join('') || '<li>暂无</li>';
+    const weaknesses = (summary.weaknesses || []).map(w => `<li>${escapeHtml(w)}</li>`).join('') || '<li>暂无</li>';
+    interviewEls.reportStrengths.innerHTML = keyPoints;
+    interviewEls.reportWeaknesses.innerHTML = weaknesses;
+    interviewEls.reportSuggestions.innerHTML = `<li>${escapeHtml(summary.overall || '深挖结束。')}</li>`;
+    const topicSec = document.getElementById('report-topic-section');
+    const studySec = document.getElementById('report-study-section');
+    if (topicSec) topicSec.style.display = 'none';
+    if (studySec) studySec.style.display = 'none';
+    ddState.mode = false;
+}
+
+initDeepDive();
