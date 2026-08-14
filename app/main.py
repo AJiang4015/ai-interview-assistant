@@ -16,6 +16,9 @@ from app.services.index_service import IndexService
 from app.services.auth_service import AuthService
 from app.services.interview_service import InterviewService
 from app.services.resume_parser import ResumeParser
+from app.api.deep_dive import router as deep_dive_router
+from app.services.deep_dive_service import DeepDiveService
+from app.storage.deep_dive_store import DeepDiveStore
 from app.services.topic_tracker import TopicTracker
 from app.storage.faiss_store import FaissStore
 from app.storage.doc_store import DocStore
@@ -48,6 +51,7 @@ query_rewrite_service: QueryRewriteService | None = None
 hybrid_retriever: HybridRetriever | None = None
 rerank_service: RerankService | None = None
 response_cache: ResponseCache | None = None
+deep_dive_service: DeepDiveService | None = None
 
 
 @asynccontextmanager
@@ -56,6 +60,7 @@ async def lifespan(app: FastAPI):
     global index_service, session_store, search_store, user_store, auth_service
     global interview_store, interview_service, resume_parser
     global query_rewrite_service, hybrid_retriever, rerank_service, response_cache
+    global deep_dive_service
 
     logger.info("Initializing services...")
 
@@ -140,6 +145,9 @@ async def lifespan(app: FastAPI):
         topic_tracker=topic_tracker,
     )
 
+    global deep_dive_service
+    deep_dive_service = DeepDiveService(store=DeepDiveStore(), llm=llm_client)
+
     idx_path = Path(settings.idx_path)
     if (idx_path / "index.faiss").exists():
         faiss_store.load(settings.idx_path)
@@ -187,6 +195,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(interview_router)
+app.include_router(deep_dive_router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():
