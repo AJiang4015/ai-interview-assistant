@@ -104,3 +104,11 @@ htmlcov/
 .temp/
 tmp/
 .DS_Store
+
+# Superpowers development files
+.superpowers/
+# Evaluation data
+data/eval_testset.json
+data/eval_reports/
+# Interview database (user data)
+data/interviews.db
