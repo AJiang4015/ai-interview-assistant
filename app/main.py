@@ -31,6 +31,9 @@ from app.services.query_rewrite import QueryRewriteService
 from app.services.rerank_service import RerankService
 from app.services.retrieval_service import HybridRetriever
 from app.services.cache_service import ResponseCache
+from app.api.evaluation import router as evaluation_router
+from app.services.evaluation_service import EvaluationService
+from app.services.eval_testset import TestSetGenerator
 
 logger = get_logger(__name__)
 
@@ -52,6 +55,8 @@ hybrid_retriever: HybridRetriever | None = None
 rerank_service: RerankService | None = None
 response_cache: ResponseCache | None = None
 deep_dive_service: DeepDiveService | None = None
+evaluation_service: EvaluationService | None = None
+testset_generator: TestSetGenerator | None = None
 
 
 @asynccontextmanager
@@ -61,6 +66,7 @@ async def lifespan(app: FastAPI):
     global interview_store, interview_service, resume_parser
     global query_rewrite_service, hybrid_retriever, rerank_service, response_cache
     global deep_dive_service
+    global evaluation_service, testset_generator
 
     logger.info("Initializing services...")
 
@@ -196,6 +202,7 @@ app.include_router(router)
 app.include_router(auth_router)
 app.include_router(interview_router)
 app.include_router(deep_dive_router)
+app.include_router(evaluation_router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():

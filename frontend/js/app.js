@@ -2391,3 +2391,48 @@ function showDeepDiveSummary(summary) {
 }
 
 initDeepDive();
+
+// ============ RAG Evaluation Module ============
+const evalEls = {
+    btnGen: document.getElementById('btn-gen-testset'),
+    btnRun: document.getElementById('btn-run-eval'),
+    result: document.getElementById('eval-result'),
+};
+
+if (evalEls.btnGen) {
+    evalEls.btnGen.addEventListener('click', async () => {
+        showToast('正在生成测试集...', 'info');
+        try {
+            const res = await fetch('/api/eval/generate-testset', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json();
+            showToast(`测试集生成完成：${data.total} 条`, 'success');
+        } catch (e) { showToast('生成失败: ' + e.message, 'error'); }
+    });
+    evalEls.btnRun.addEventListener('click', async () => {
+        evalEls.btnRun.disabled = true; evalEls.btnRun.textContent = '评测中...';
+        try {
+            const res = await fetch('/api/eval/run', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json();
+            renderEvalResult(data);
+        } catch (e) { showToast('评测失败: ' + e.message, 'error'); }
+        finally { evalEls.btnRun.disabled = false; evalEls.btnRun.textContent = '运行评测'; }
+    });
+}
+
+function renderEvalResult(data) {
+    if (data.error) { showToast(data.error, 'error'); return; }
+    const rows = (data.configs || []).map(c => `
+        <tr>
+            <td>${escapeHtml(c.name)}</td>
+            <td>${c.retrieval.hit_rate}</td><td>${c.retrieval.recall}</td><td>${c.retrieval.mrr}</td>
+            <td>${c.generation.faithfulness}</td><td>${c.generation.answer_relevance}</td><td>${c.generation.context_relevance}</td>
+        </tr>`).join('');
+    evalEls.result.innerHTML = `
+        <table class="eval-table"><thead><tr>
+            <th>策略</th><th>Hit Rate</th><th>Recall</th><th>MRR</th>
+            <th>Faithfulness</th><th>Answer Rel.</th><th>Context Rel.</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+    evalEls.result.style.display = 'block';
+}
