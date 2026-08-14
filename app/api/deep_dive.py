@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 
@@ -14,7 +14,7 @@ class DeepDiveStartRequest(BaseModel):
 class DeepDiveAnswerRequest(BaseModel):
     question_id: str
     answer: str = Field(..., min_length=1, max_length=10000)
-    action: str = "continue"  # continue | switch | end
+    action: Literal["continue", "end"] = "continue"  # continue | end
 
 
 class DeepDiveEndRequest(BaseModel):

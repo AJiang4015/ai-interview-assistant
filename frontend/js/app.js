@@ -2342,7 +2342,12 @@ function ddContinue() {
 }
 
 function ddSwitchTech() {
+    if (ddState.sessionId) {
+        fetch('/api/deepdive/end', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: ddState.sessionId }) })
+            .catch(() => {});
+    }
     ddState.mode = false;
+    ddState.currentQuestionId = null;
     ddState.nextQuestion = null;
     ddState.sessionId = null;
     showInterviewReady();

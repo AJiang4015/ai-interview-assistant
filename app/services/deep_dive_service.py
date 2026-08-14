@@ -103,8 +103,12 @@ class DeepDiveService:
         session = self.store.create_session(project_name, tech_point, description)
         prompt = FIRST_ASK_PROMPT.format(
             project_name=project_name, tech_points=tech_point, description=description)
-        text = await self.llm.chat(prompt, SYSTEM_MEAN)
-        parsed = _parse_json(text) or {"question": f"请先解释一下你在项目 {project_name} 中使用 {tech_point} 的动机。"}
+        try:
+            text = await self.llm.chat(prompt, SYSTEM_MEAN)
+            parsed = _parse_json(text) or {"question": f"请先解释一下你在项目 {project_name} 中使用 {tech_point} 的动机。"}
+        except Exception as e:
+            logger.warning("Deep dive first_ask LLM call failed: %s", e)
+            parsed = {"question": f"请先解释一下你在项目 {project_name} 中使用 {tech_point} 的动机。"}
         q = self.store.add_question(session["id"], 1, parsed["question"])
         return {"session_id": session["id"], "question": self._qdict(q)}
 
@@ -115,24 +119,32 @@ class DeepDiveService:
         questions = self.store.get_questions(session["id"])
         current = next(q for q in questions if q["id"] == question_id)
 
-        judge_text = await self.llm.chat(
-            JUDGE_PROMPT.format(question=current["question"], answer=answer), SYSTEM_MEAN)
-        judge = _parse_json(judge_text) or {"score": 5, "judgment": "", "can_answer": True}
+        try:
+            judge_text = await self.llm.chat(
+                JUDGE_PROMPT.format(question=current["question"], answer=answer), SYSTEM_MEAN)
+            judge = _parse_json(judge_text) or {"score": 5, "judgment": "", "can_answer": True}
+        except Exception as e:
+            logger.warning("Deep dive judge LLM call failed: %s", e)
+            judge = {"score": 5, "judgment": "", "can_answer": True}
         self.store.update_answer(question_id, answer, judge.get("score", 5), judge)
 
         questions = self.store.get_questions(session["id"])
         answered = [q for q in questions if q["answer"]]
         depth = len(answered)
-        if action == "end" or depth >= MAX_DEPTH or judge.get("can_answer") is False:
+        if action == "end" or depth >= MAX_DEPTH or not judge.get("can_answer", True):
             summary = await self._generate_summary(session["id"])
             return {"is_complete": True, "judgment": judge, "summary": summary}
 
-        follow_text = await self.llm.chat(
-            FOLLOW_UP_PROMPT.format(
-                tech_point=session["tech_point"], project_name=session["project_name"],
-                history=self._fmt_history(questions), answer=answer),
-            SYSTEM_MEAN)
-        follow = _parse_json(follow_text) or {"question": "再说得具体一点，你当时是怎么实现的？"}
+        try:
+            follow_text = await self.llm.chat(
+                FOLLOW_UP_PROMPT.format(
+                    tech_point=session["tech_point"], project_name=session["project_name"],
+                    history=self._fmt_history(questions), answer=answer),
+                SYSTEM_MEAN)
+            follow = _parse_json(follow_text) or {"question": "再说得具体一点，你当时是怎么实现的？"}
+        except Exception as e:
+            logger.warning("Deep dive follow_up LLM call failed: %s", e)
+            follow = {"question": "再说得具体一点，你当时是怎么实现的？"}
         nq = self.store.add_question(session["id"], depth + 1, follow["question"])
         return {"is_complete": False, "judgment": judge, "next_question": self._qdict(nq)}
 
@@ -143,8 +155,12 @@ class DeepDiveService:
     async def _generate_summary(self, session_id: str) -> dict:
         questions = self.store.get_questions(session_id)
         history = "\n".join(f"Q: {q['question']}\nA: {q['answer']}" for q in questions)
-        text = await self.llm.chat(SUMMARY_PROMPT.format(history=history))
-        parsed = _parse_json(text) or {"weaknesses": [], "key_points": [], "overall": "深挖结束。"}
+        try:
+            text = await self.llm.chat(SUMMARY_PROMPT.format(history=history))
+            parsed = _parse_json(text) or {"weaknesses": [], "key_points": [], "overall": "深挖结束。"}
+        except Exception as e:
+            logger.warning("Deep dive summary LLM call failed: %s", e)
+            parsed = {"weaknesses": [], "key_points": [], "overall": "深挖结束。"}
         self.store.complete_session(session_id, json.dumps(parsed, ensure_ascii=False))
         return parsed
 
