@@ -22,3 +22,27 @@ def test_decide_report_at_max_rounds():
     p = InterviewPlanner()
     ctx = PlannerContext(total_answered=15, max_rounds=15, should_end=False)
     assert p.decide(ctx) == "generate_report"
+
+def test_agent_run_action_dispatches():
+    from app.services.interview_agent import InterviewAgent
+    class FakeTools:
+        def ask_question(self): return {"kind": "ask"}
+        def generate_report(self): return {"kind": "report"}
+    agent = InterviewAgent(tools=FakeTools())
+    assert agent.run_action("ask_question") == {"kind": "ask"}
+    assert agent.run_action("generate_report") == {"kind": "report"}
+
+def test_agent_step_uses_planner():
+    from app.services.interview_agent import InterviewAgent, PlannerContext
+    class FakeTools:
+        def ask_question(self): return {"kind": "ask"}
+        def generate_report(self): return {"kind": "report"}
+    agent = InterviewAgent(tools=FakeTools())
+    from unittest.mock import MagicMock
+    planner = MagicMock()
+    planner.decide.return_value = "generate_report"
+    agent.planner = planner
+    ctx = PlannerContext(total_answered=15, max_rounds=15)
+    out = agent.step(ctx)
+    assert out == {"kind": "report"}
+    planner.decide.assert_called_once_with(ctx)
