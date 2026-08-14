@@ -122,6 +122,18 @@ async def lifespan(app: FastAPI):
         enabled=settings.enable_rerank,
     )
 
+    def _eval_load_chunks():
+        """从 DocStore 读取知识库 chunk 列表，供测试集生成。"""
+        data = doc_store.load()
+        if data and data.get("chunks"):
+            return [{"content": c["content"], "source": c["source_file"]} for c in data["chunks"]]
+        return []
+
+    testset_generator = TestSetGenerator(llm=llm_client, chunks=_eval_load_chunks())
+    evaluation_service = EvaluationService(
+        llm=llm_client, embedding=embedding_service, faiss=faiss_store,
+        hybrid_retriever=hybrid_retriever, reranker=rerank_service)
+
     # 响应缓存
     response_cache = ResponseCache(
         session_store=session_store,
