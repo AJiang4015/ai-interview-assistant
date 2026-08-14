@@ -94,5 +94,9 @@ class FaissStore:
         self.dimension = 0
         self._metadata = []
 
+    def get_all_metadata(self) -> list[dict]:
+        """返回全部向量元数据，用于同步重建 BM25 索引。"""
+        return self._metadata
+
     def is_loaded(self) -> bool:
         return self.index is not None and self.index.ntotal > 0

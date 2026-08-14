@@ -5,7 +5,7 @@ const state = {
     sessionMessages: {},
     pendingStreams: {},
     loadingSessions: new Set(),
-    currentView: 'chat',
+    currentView: 'interview',
     sessionId: null,
     sessions: []
 };
@@ -14,9 +14,9 @@ const els = {
     navItems: document.querySelectorAll('.nav-item'),
     views: {
         chat: document.getElementById('view-chat'),
-        index: document.getElementById('view-index'),
-        docs: document.getElementById('view-docs'),
-        interview: document.getElementById('view-interview')
+        interview: document.getElementById('view-interview'),
+        review: document.getElementById('view-review'),
+        settings: document.getElementById('view-settings')
     },
     dotFaiss: document.getElementById('dot-faiss'),
     dotEmbedding: document.getElementById('dot-embedding'),
@@ -76,10 +76,35 @@ function switchView(view) {
     Object.entries(els.views).forEach(([key, el]) => {
         el.classList.toggle('active', key === view);
     });
-    if (view === 'index') {
+    if (view === 'settings') {
+        switchSettingsTab('index');
         loadIndexStatus();
     }
-    if (view === 'docs') {
+    if (view === 'review') {
+        loadReviewData();
+    }
+}
+
+// ============ Settings Tabs ============
+function initSettingsTabs() {
+    const tabs = document.querySelectorAll('.settings-tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchSettingsTab(tab.dataset.tab);
+        });
+    });
+}
+
+function switchSettingsTab(tab) {
+    const tabs = document.querySelectorAll('.settings-tab');
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    const indexPanel = document.getElementById('view-index');
+    const docsPanel = document.getElementById('view-docs');
+    if (indexPanel) indexPanel.style.display = tab === 'index' ? 'block' : 'none';
+    if (docsPanel) docsPanel.style.display = tab === 'docs' ? 'block' : 'none';
+    if (tab === 'index') {
+        loadIndexStatus();
+    } else if (tab === 'docs') {
         loadFileList();
     }
 }
@@ -89,13 +114,19 @@ async function checkHealth() {
     try {
         const res = await fetch(`${API_BASE}/api/health`);
         const data = await res.json();
-        updateStatus('faiss', data.faiss_index === 'empty' ? 'offline' : 'online', data.faiss_index);
-        updateStatus('embedding', data.embedding_service === 'available' ? 'online' : 'offline', data.embedding_service);
-        updateStatus('llm', data.llm_service === 'available' ? 'online' : 'offline', data.llm_service);
+        updateStatus('faiss',
+            data.faiss_index === 'empty' ? 'offline' : 'online',
+            data.faiss_index === 'empty' ? '未构建' : '正常');
+        updateStatus('embedding',
+            data.embedding_service === 'available' ? 'online' : 'offline',
+            data.embedding_service === 'available' ? '正常' : '不可用');
+        updateStatus('llm',
+            data.llm_service === 'available' ? 'online' : 'offline',
+            data.llm_service === 'available' ? '正常' : '不可用');
     } catch (e) {
-        updateStatus('faiss', 'offline', 'unreachable');
-        updateStatus('embedding', 'offline', 'unreachable');
-        updateStatus('llm', 'offline', 'unreachable');
+        updateStatus('faiss', 'offline', '无法连接');
+        updateStatus('embedding', 'offline', '无法连接');
+        updateStatus('llm', 'offline', '无法连接');
     }
 }
 
@@ -103,7 +134,7 @@ function updateStatus(key, status, value) {
     const dot = els['dot' + key.charAt(0).toUpperCase() + key.slice(1)];
     const val = els['val' + key.charAt(0).toUpperCase() + key.slice(1)];
     dot.className = 'status-dot' + (status === 'online' ? ' online' : status === 'warning' ? ' warning' : ' offline');
-    val.textContent = value || status;
+    val.textContent = value || (status === 'online' ? '正常' : '不可用');
 }
 
 // ============ Session Management ============
@@ -491,9 +522,11 @@ function renderMarkdown(text) {
     // highlight.js 高亮所有 <code> 块
     const wrapper = document.createElement('div');
     wrapper.innerHTML = DOMPurify.sanitize(html, DOMPurifyConfig);
-    wrapper.querySelectorAll('pre code').forEach(block => {
-        hljs.highlightElement(block);
-    });
+    if (typeof hljs !== 'undefined') {
+        wrapper.querySelectorAll('pre code').forEach(block => {
+            try { hljs.highlightElement(block); } catch (e) {}
+        });
+    }
     return wrapper.innerHTML;
 }
 
@@ -1429,6 +1462,7 @@ checkHealth();
 loadIndexStatus();
 loadSessions();
 initAuth();
+initSettingsTabs();
 setInterval(checkHealth, 30000);
 
 // ============ Interview Module ============
@@ -1441,6 +1475,8 @@ const interviewState = {
     isSubmitting: false,
     isComplete: false,
     resumeFile: null,
+    nextQuestion: null,
+    reanswering: false,
 };
 
 const interviewEls = {
@@ -1466,6 +1502,10 @@ const interviewEls = {
     evaluationScore: document.getElementById('evaluation-score'),
     evaluationComment: document.getElementById('evaluation-comment'),
     evaluationTags: document.getElementById('evaluation-tags'),
+    evaluationActions: document.getElementById('evaluation-actions'),
+    btnNextQuestion: document.getElementById('btn-next-question'),
+    btnReanswer: document.getElementById('btn-reanswer'),
+    btnEndAfterAnswer: document.getElementById('btn-end-after-answer'),
     loadingText: document.getElementById('loading-text'),
     reportScore: document.getElementById('report-score-num'),
     reportLevel: document.getElementById('report-level'),
@@ -1489,6 +1529,21 @@ const interviewEls = {
     jdInput: document.getElementById('jd-input'),
 };
 
+const reviewEls = {
+    todayPlaceholder: document.getElementById('today-placeholder'),
+    todayQuestion: document.getElementById('today-question'),
+    todayTags: document.getElementById('today-tags'),
+    todayText: document.getElementById('today-text'),
+    todayPosition: document.getElementById('today-position'),
+    btnTodayRefresh: document.getElementById('btn-today-refresh'),
+    statsTotal: document.getElementById('stats-total'),
+    weakStats: document.getElementById('weak-stats'),
+    historyList: document.getElementById('history-list'),
+    historyEmpty: document.getElementById('history-empty'),
+    btnRefreshHistory: document.getElementById('btn-refresh-history'),
+    historyDetail: document.getElementById('history-detail'),
+};
+
 function initInterview() {
     // 岗位选择
     interviewEls.positionBtns.forEach(btn => {
@@ -1505,7 +1560,12 @@ function initInterview() {
     interviewEls.btnSubmit.addEventListener('click', submitAnswer);
     interviewEls.btnEnd.addEventListener('click', endInterview);
     interviewEls.btnNew.addEventListener('click', resetInterview);
-    interviewEls.btnHistory.addEventListener('click', () => switchView('chat'));
+    interviewEls.btnHistory.addEventListener('click', () => switchView('review'));
+
+    // 用户可控节奏：下一题 / 再答一次 / 结束
+    interviewEls.btnNextQuestion.addEventListener('click', goNextQuestion);
+    interviewEls.btnReanswer.addEventListener('click', reanswerQuestion);
+    interviewEls.btnEndAfterAnswer.addEventListener('click', endInterview);
 
     // 回答输入
     interviewEls.answerInput.addEventListener('input', () => {
@@ -1597,6 +1657,8 @@ async function startInterview() {
         interviewState.sessionId = data.session_id;
         interviewState.currentQuestionId = data.question.id;
         interviewState.currentRound = data.question.round;
+        interviewState.nextQuestion = null;
+        interviewState.reanswering = false;
 
         showInterviewProgress(data.question);
     } catch (err) {
@@ -1620,7 +1682,9 @@ async function submitAnswer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 question_id: interviewState.currentQuestionId,
-                answer: answer
+                answer: answer,
+                // 再答一次时不重新生成下一题，保留上一轮的结果，避免重复题目落库
+                generate_next: !interviewState.reanswering
             })
         });
 
@@ -1632,21 +1696,22 @@ async function submitAnswer() {
         const data = await res.json();
         showEvaluation(data.evaluation);
 
-        if (data.is_complete) {
-            // 面试结束，显示报告
-            setTimeout(() => showInterviewReport(data.report, interviewState.position), 1000);
-        } else if (data.next_question) {
-            // 下一题
-            setTimeout(() => {
-                interviewState.currentQuestionId = data.next_question.id;
-                interviewState.currentRound = data.next_question.round;
-                hideEvaluation();
-                showInterviewProgress(data.next_question);
-            }, 1500);
-        }
-
         interviewState.isSubmitting = false;
         interviewEls.btnSubmit.textContent = '提交回答';
+
+        if (data.is_complete && data.report) {
+            // 面试自然结束，直接展示报告
+            setTimeout(() => showInterviewReport(data.report, interviewState.position), 800);
+            return;
+        }
+
+        // 保存下一题（再答一次时后端不生成，沿用上一轮结果）
+        if (data.next_question) {
+            interviewState.nextQuestion = data.next_question;
+        }
+
+        // 把节奏交给用户：展示「下一题 / 再答一次 / 结束面试」
+        interviewEls.evaluationActions.style.display = 'flex';
     } catch (e) {
         showToast('提交失败: ' + e.message, 'error');
         interviewState.isSubmitting = false;
@@ -1654,6 +1719,29 @@ async function submitAnswer() {
         interviewEls.btnSubmit.textContent = '提交回答';
         interviewEls.answerInput.disabled = false;
     }
+}
+
+function goNextQuestion() {
+    const q = interviewState.nextQuestion;
+    if (!q) return;
+    interviewState.currentQuestionId = q.id;
+    interviewState.currentRound = q.round;
+    interviewState.nextQuestion = null;
+    interviewState.reanswering = false;
+    hideEvaluation();
+    showInterviewProgress(q);
+}
+
+function reanswerQuestion() {
+    // 留在当前题，重新作答并重新评价
+    interviewState.reanswering = true;
+    interviewEls.evaluationActions.style.display = 'none';
+    hideEvaluation();
+    interviewEls.answerInput.disabled = false;
+    interviewEls.answerInput.value = '';
+    interviewEls.btnSubmit.disabled = true;
+    interviewEls.btnSubmit.textContent = '提交回答';
+    interviewEls.answerInput.focus();
 }
 
 async function endInterview() {
@@ -1695,6 +1783,10 @@ function showInterviewProgress(question) {
     interviewEls.loading.style.display = 'none';
     interviewEls.report.style.display = 'none';
     interviewEls.progress.style.display = 'flex';
+
+    // 新题展示时隐藏评价与操作按钮
+    interviewEls.evaluationArea.style.display = 'none';
+    interviewEls.evaluationActions.style.display = 'none';
 
     interviewEls.positionBadge.textContent = interviewState.position;
     interviewEls.round.textContent = `第 ${question.round || 1} 题`;
@@ -1879,10 +1971,13 @@ function resetInterview() {
     interviewState.currentRound = 0;
     interviewState.isSubmitting = false;
     interviewState.isComplete = false;
+    interviewState.nextQuestion = null;
+    interviewState.reanswering = false;
 
     interviewEls.positionBtns.forEach(b => b.classList.remove('selected'));
     interviewEls.btnStart.disabled = true;
     interviewEls.evaluationArea.style.display = 'none';
+    interviewEls.evaluationActions.style.display = 'none';
 
     // Reset resume + JD
     interviewState.resumeFile = null;
@@ -1896,3 +1991,172 @@ function resetInterview() {
 
 // 初始化面试模块
 initInterview();
+
+// ============ Review Page Module ============
+
+async function loadReviewData() {
+    await Promise.all([loadToday(), loadStats(), loadHistory()]);
+}
+
+async function loadToday() {
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/today`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderToday(data);
+    } catch (e) {
+        reviewEls.todayPlaceholder.textContent = '今日一题加载失败，请稍后刷新。';
+        reviewEls.todayPlaceholder.style.display = 'block';
+        reviewEls.todayQuestion.style.display = 'none';
+    }
+}
+
+function renderToday(data) {
+    reviewEls.todayPlaceholder.style.display = 'none';
+    reviewEls.todayQuestion.style.display = 'block';
+    reviewEls.todayText.textContent = data.question || '';
+    reviewEls.todayTags.innerHTML = '';
+    if (data.category) {
+        reviewEls.todayTags.innerHTML += `<span class="tag-category">${escapeHtml(data.category)}</span>`;
+    }
+    if (data.topic) {
+        reviewEls.todayTags.innerHTML += `<span class="tag-topic">${escapeHtml(data.topic)}</span>`;
+    }
+}
+
+async function loadStats() {
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/stats`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderStats(data);
+    } catch (e) {
+        reviewEls.weakStats.innerHTML = '<div class="empty-state">薄弱点数据加载失败</div>';
+    }
+}
+
+function renderStats(data) {
+    const cats = data.categories || [];
+    if (cats.length === 0) {
+        reviewEls.statsTotal.textContent = '暂无数据';
+        reviewEls.weakStats.innerHTML = '<div class="empty-state">完成面试后，这里会聚合你的薄弱知识点。</div>';
+        return;
+    }
+    reviewEls.statsTotal.textContent = `共 ${data.total_questions || 0} 题 · ${cats.length} 个分类`;
+    reviewEls.weakStats.innerHTML = cats.map(cat => {
+        const pct = Math.round((cat.avg_score / 10) * 100);
+        const barColor = cat.avg_score < 5 ? '#f87171' : '#fbbf24';
+        const topics = (cat.weak_topics || []).map(t =>
+            `<span class="weak-topic-chip">${escapeHtml(t.topic)} · ${t.avg_score}分</span>`
+        ).join('');
+        return `
+            <div class="weak-stat-item">
+                <div class="weak-stat-header">
+                    <span class="weak-stat-category">${escapeHtml(cat.category)}</span>
+                    <span class="weak-stat-meta">${cat.total_questions} 题 · 均分 ${cat.avg_score}</span>
+                </div>
+                <div class="weak-stat-bar"><div class="weak-stat-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+                ${topics ? `<div class="weak-stat-topics">${topics}</div>` : '<div class="weak-stat-meta">暂无明显薄弱点</div>'}
+            </div>
+        `;
+    }).join('');
+}
+
+function formatDateTime(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadHistory() {
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/history`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderHistory(data.sessions || []);
+    } catch (e) {
+        reviewEls.historyList.innerHTML = '<div class="empty-state">面试记录加载失败</div>';
+    }
+}
+
+function renderHistory(sessions) {
+    if (sessions.length === 0) {
+        reviewEls.historyList.innerHTML = '<div class="empty-state">暂无面试记录，去「AI面试」开始第一场吧。</div>';
+        return;
+    }
+    reviewEls.historyList.innerHTML = sessions.map(s => {
+        const status = s.status === 'completed' ? '已完成' : '进行中';
+        const statusClass = s.status === 'completed' ? 'done' : 'incomplete';
+        const score = s.total_score != null ? s.total_score : '-';
+        return `
+            <div class="history-item" data-session-id="${escapeHtml(s.id)}">
+                <div class="history-item-main">
+                    <span class="history-item-pos">${escapeHtml(s.position || '未命名')}</span>
+                    <span class="history-item-meta">${formatDateTime(s.started_at)}</span>
+                </div>
+                <div class="history-item-right">
+                    <span class="history-item-status ${statusClass}">${status}</span>
+                    <span class="history-item-score">${score}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function showHistoryDetail(sessionId) {
+    try {
+        const res = await fetch(`${API_BASE}/api/interview/report/${encodeURIComponent(sessionId)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const report = data.report || {};
+        const analysis = report.knowledge_analysis || {};
+        const strengths = (analysis.strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+        const weaknesses = (analysis.weaknesses || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+        const suggestions = (report.improvement_suggestions || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+
+        reviewEls.historyDetail.innerHTML = `
+            <div class="history-detail-header">
+                <h4>面试报告</h4>
+                <button class="history-detail-close" id="history-detail-close">&times;</button>
+            </div>
+            <div class="history-detail-score">总分 ${report.total_score ?? '-'} · ${escapeHtml(report.level || '未知')}</div>
+            <div class="history-detail-section">
+                <h5>掌握较好</h5>
+                <ul>${strengths}</ul>
+            </div>
+            <div class="history-detail-section">
+                <h5>需要加强</h5>
+                <ul>${weaknesses}</ul>
+            </div>
+            <div class="history-detail-section">
+                <h5>改进建议</h5>
+                <ul>${suggestions}</ul>
+            </div>
+        `;
+        reviewEls.historyDetail.style.display = 'block';
+        const closeBtn = document.getElementById('history-detail-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => { reviewEls.historyDetail.style.display = 'none'; });
+        }
+    } catch (e) {
+        showToast('报告加载失败', 'error');
+    }
+}
+
+if (reviewEls.historyList) {
+    reviewEls.historyList.addEventListener('click', async (e) => {
+        const item = e.target.closest('.history-item');
+        if (!item) return;
+        await showHistoryDetail(item.dataset.sessionId);
+    });
+}
+
+if (reviewEls.btnRefreshHistory) {
+    reviewEls.btnRefreshHistory.addEventListener('click', loadHistory);
+}
+
+if (reviewEls.btnTodayRefresh) {
+    reviewEls.btnTodayRefresh.addEventListener('click', loadToday);
+}

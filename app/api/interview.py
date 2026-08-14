@@ -16,6 +16,7 @@ class StartInterviewRequest(BaseModel):
 class AnswerRequest(BaseModel):
     question_id: str
     answer: str = Field(..., min_length=1, max_length=10000)
+    generate_next: bool = True
 
 
 class EndInterviewRequest(BaseModel):
@@ -56,7 +57,7 @@ async def start_interview(
 async def submit_answer(req: AnswerRequest):
     """Submit an answer to the current question."""
     try:
-        result = await _get_service().answer(req.question_id, req.answer)
+        result = await _get_service().answer(req.question_id, req.answer, generate_next=req.generate_next)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -96,6 +97,24 @@ async def list_history():
     try:
         sessions = _get_service().history()
         return {"total": len(sessions), "sessions": sessions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats")
+async def get_stats():
+    """跨场次知识点画像（薄弱点聚合）。"""
+    try:
+        return _get_service().stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/today")
+async def get_today(position: str = Query(default="Java后端")):
+    """今日一题：从历史薄弱分类生成一道复习题。"""
+    try:
+        return await _get_service().today(position=position)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

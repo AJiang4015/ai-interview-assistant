@@ -55,6 +55,16 @@ async def _rebuild_index_async():
         logger.exception(f"Background index rebuild failed: {e}")
 
 
+async def _add_document_async(file_path: Path):
+    """后台异步增量索引单个文件，不阻塞响应"""
+    try:
+        indexer = _get_indexer()
+        result = await indexer.add_document(file_path)
+        logger.info(f"Background incremental index completed: {result.total_chunks} chunks, {result.files_processed} files")
+    except Exception as e:
+        logger.exception(f"Background incremental index failed: {e}")
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     rag = _get_rag()
@@ -282,12 +292,12 @@ async def upload_file(file: UploadFile = File(...)):
 
     logger.info(f"File uploaded: {filename} ({len(content)} bytes)")
 
-    # 后台异步重建索引
-    asyncio.create_task(_rebuild_index_async())
+    # 后台异步增量索引（仅新增文件，不全量重建）
+    asyncio.create_task(_add_document_async(file_path))
     return FileUploadResponse(
         success=True,
         filename=filename,
-        message="文件上传成功，索引正在后台重建...",
+        message="文件上传成功，正在自动增量索引...",
         index_rebuilt=False
     )
 

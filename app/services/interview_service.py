@@ -228,8 +228,16 @@ class InterviewService:
             "question": question_data,
         }
 
-    async def answer(self, question_id: str, answer: str) -> dict:
-        """Submit an answer, get evaluation and optionally next question."""
+    async def answer(self, question_id: str, answer: str, generate_next: bool = True) -> dict:
+        """Submit an answer, get evaluation and optionally next question.
+
+        Args:
+            question_id: The question to answer.
+            answer: The user's answer text.
+            generate_next: If True, also generate the next question. When the
+                user is re-answering the same question ("再答一次"), pass False
+                to only return the fresh evaluation and let the frontend decide.
+        """
         # Get the question record directly from SQLite
         with self.store._get_conn() as conn:
             row = conn.execute(
@@ -285,6 +293,15 @@ class InterviewService:
             # Ask user if they want to continue (we'll let the frontend decide)
             pass
 
+        # 再答一次：只返回评价，不生成下一题，把节奏权交还给用户
+        if not generate_next:
+            return {
+                "evaluation": evaluation,
+                "is_complete": False,
+                "next_question": None,
+                "session_id": session_id,
+            }
+
         # Generate next question
         next_difficulty = evaluation.get("next_difficulty", "medium")
         next_round = total_rounds + 1
@@ -324,6 +341,115 @@ class InterviewService:
     def history(self) -> list[dict]:
         """List recent interview sessions."""
         return self.store.list_sessions()
+
+    def stats(self) -> dict:
+        """跨场次知识点画像：聚合所有已完成面试中各 topic/category 的得分。
+
+        返回每个分类的题目数、平均分、薄弱子标题，用于复习页的"薄弱点画像"。
+        """
+        try:
+            sessions = self.store.list_sessions(limit=100)
+        except Exception as e:
+            logger.warning(f"Failed to list sessions for stats: {e}")
+            sessions = []
+
+        category_map: dict[str, dict] = {}
+        for s in sessions:
+            if s.get("status") != "completed":
+                continue
+            try:
+                questions = self.store.get_questions(s["id"])
+            except Exception as e:
+                logger.warning(f"Failed to load questions for session {s['id']}: {e}")
+                continue
+            for q in questions:
+                if q.get("answer") == "":
+                    continue
+                category = q.get("category") or "未分类"
+                topic = q.get("topic") or "未指定"
+                score = q.get("score") or 0
+                cat = category_map.setdefault(category, {
+                    "category": category,
+                    "total_questions": 0,
+                    "total_score": 0.0,
+                    "topics": {},
+                })
+                cat["total_questions"] += 1
+                cat["total_score"] += score
+                topic_entry = cat["topics"].setdefault(topic, {"count": 0, "total_score": 0.0})
+                topic_entry["count"] += 1
+                topic_entry["total_score"] += score
+
+        categories = []
+        for cat in category_map.values():
+            avg = round(cat["total_score"] / max(cat["total_questions"], 1), 1)
+            weak_topics = [
+                {
+                    "topic": t,
+                    "count": info["count"],
+                    "avg_score": round(info["total_score"] / max(info["count"], 1), 1),
+                }
+                for t, info in cat["topics"].items()
+                if (info["total_score"] / max(info["count"], 1)) < 6.0
+            ]
+            weak_topics.sort(key=lambda x: x["avg_score"])
+            categories.append({
+                "category": cat["category"],
+                "total_questions": cat["total_questions"],
+                "avg_score": avg,
+                "weak_topics": weak_topics,
+            })
+
+        categories.sort(key=lambda c: (c["avg_score"], -c["total_questions"]))
+        return {"categories": categories, "total_questions": sum(c["total_questions"] for c in categories)}
+
+    async def today(self, position: str = "Java后端") -> dict:
+        """今日一题：从历史薄弱分类中选一个 topic，调用 LLM 生成一道复习题。
+
+        若无历史数据，则按默认岗位随机出一题。该题独立于面试流程，不落库。
+        """
+        stats = self.stats()
+        weak_topics = []
+        for cat in stats.get("categories", []):
+            for t in cat.get("weak_topics", []):
+                weak_topics.append({"category": cat["category"], **t})
+        weak_topics.sort(key=lambda x: x["avg_score"])
+
+        prompt = (
+            "请出一道技术面试复习题。\n"
+            f"岗位方向：{position}\n"
+        )
+        if weak_topics:
+            target = weak_topics[0]
+            prompt += (
+                f"需要重点考察的领域：{target['category']} - {target['topic']}\n"
+                f"该知识点历史平均得分 {target['avg_score']}/10，属于薄弱环节，请针对性出题。\n"
+            )
+        else:
+            prompt += "请从该岗位的核心知识点中随机出题。\n"
+
+        prompt += (
+            "请以 JSON 格式返回，字段：question（题目内容）、topic（知识点名称）、"
+            "category（分类）、difficulty（easy/medium/hard）、source（固定为 today）。"
+        )
+
+        try:
+            text = await self.llm.chat(prompt)
+            parsed = _parse_json(text)
+        except Exception as e:
+            logger.error(f"Today question generation failed: {e}")
+            parsed = None
+
+        if not parsed:
+            return {"question": "今日复习题生成失败，请稍后再试。", "topic": "", "category": "", "difficulty": "medium"}
+
+        return {
+            "question": parsed.get("question", ""),
+            "topic": parsed.get("topic", ""),
+            "category": parsed.get("category", ""),
+            "difficulty": parsed.get("difficulty", "medium"),
+            "source": "today",
+        }
 
     # --- Internal methods ---
 

@@ -100,3 +100,44 @@ class IndexService:
             last_build_time=doc_status["last_build_time"],
             knowledge_base_files=doc_status["knowledge_base_files"]
         )
+
+    async def add_document(self, file_path) -> BuildIndexResponse:
+        """增量索引单个文件：拆分→嵌入→追加到已有索引，不全量重建。
+
+        适用于上传新文档时，避免全量重建造成的向量重复与耗时。
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            logger.warning(f"add_document: file not found {file_path}")
+            return BuildIndexResponse(status="error", total_chunks=0, files_processed=0)
+
+        try:
+            chunks = self.splitter.split_file(file_path)
+        except Exception as e:
+            logger.error(f"Failed to split file {file_path.name}: {e}")
+            return BuildIndexResponse(status="error", total_chunks=0, files_processed=0)
+
+        if not chunks:
+            logger.warning(f"No chunks produced for file: {file_path.name}")
+            return BuildIndexResponse(status="warning", total_chunks=0, files_processed=0)
+
+        contents = [c["content"] for c in chunks]
+        vectors = await self.embedding.encode(contents)
+        logger.info(f"add_document: embedded {len(vectors)} vectors for {file_path.name}")
+
+        self.faiss.add_vectors(vectors, chunks)
+        self.faiss.save(settings.idx_path)
+        self.doc_store.append(chunks)
+
+        # 基于 faiss 全量元数据重建 BM25（BM25 需整体重建）
+        if self.hybrid_retriever:
+            all_meta = self.faiss.get_all_metadata()
+            bm25_docs = [{"_id": m.get("_id", i), **m} for i, m in enumerate(all_meta)]
+            self.hybrid_retriever.save_bm25(bm25_docs)
+
+        logger.info(f"add_document: indexed {len(chunks)} chunks from {file_path.name}")
+        return BuildIndexResponse(
+            status="success",
+            total_chunks=len(chunks),
+            files_processed=1,
+        )

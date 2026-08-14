@@ -26,6 +26,29 @@ class DocStore:
         with open(self._meta_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+    def append(self, chunks: list[dict]) -> None:
+        """增量追加 chunks 到元数据，id 延续现有索引。"""
+        existing = self.load() or {"chunks": [], "last_build_time": None, "total_chunks": 0}
+        existing_chunks = existing.get("chunks", [])
+        start_id = len(existing_chunks)
+        new_chunks = [
+            {
+                "id": start_id + i,
+                "source_file": c["source_file"],
+                "chunk_index": c["chunk_index"],
+                "content": c["content"]
+            }
+            for i, c in enumerate(chunks)
+        ]
+        existing_chunks.extend(new_chunks)
+        data = {
+            "chunks": existing_chunks,
+            "last_build_time": datetime.now().isoformat(),
+            "total_chunks": len(existing_chunks),
+        }
+        with open(self._meta_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
     def load(self) -> dict | None:
         if not self._meta_file.exists():
             return None

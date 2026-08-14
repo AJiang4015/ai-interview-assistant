@@ -28,21 +28,21 @@
             </div>
 
             <nav class="nav">
-                <button class="nav-item active" data-view="chat">
+                <button class="nav-item active" data-view="interview">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 4h14v10H2z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="6" cy="8" r="1.5" fill="currentColor"/><circle cx="10" cy="8" r="1.5" fill="currentColor"/><circle cx="14" cy="8" r="1.5" fill="currentColor"/><path d="M6 11h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                    AI面试
+                </button>
+                <button class="nav-item" data-view="review">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2l1.5 4h4l-3 2.5L13 13l-4-3-4 3 1.5-4.5L3 6h4L9 2z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>
+                    复习
+                </button>
+                <button class="nav-item" data-view="chat">
                     <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 3h14v9H5l-3 3V3z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                     问答
                 </button>
-                <button class="nav-item" data-view="index">
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="2" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 6h6M6 9h6M6 12h3" stroke="currentColor" stroke-width="1.5"/></svg>
-                    索引管理
-                </button>
-                <button class="nav-item" data-view="docs">
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M14 2H4a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V4l-2-2z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M14 2v2h2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-                    知识库
-                </button>
-                <button class="nav-item" data-view="interview">
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 4h14v10H2z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="6" cy="8" r="1.5" fill="currentColor"/><circle cx="10" cy="8" r="1.5" fill="currentColor"/><circle cx="14" cy="8" r="1.5" fill="currentColor"/><path d="M6 11h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-                    AI面试
+                <button class="nav-item" data-view="settings">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M9 2v2M9 14v2M2 9h2M14 9h2M4 4l1.5 1.5M12.5 12.5L14 14M14 4l-1.5 1.5M5.5 12.5L4 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    设置
                 </button>
             </nav>
 
@@ -134,7 +134,7 @@
                         <div class="msg-content">
                             <p>你好！我是基于 RAG 的 Java/后端面试助手。</p>
                             <p>你可以问我关于 <strong>Java 基础</strong>、<strong>Spring</strong>、<strong>MySQL</strong>、<strong>Redis</strong>、<strong>操作系统</strong>、<strong>计算机网络</strong> 等相关问题。</p>
-                            <p class="hint">💡 点击"索引管理"可重建知识库索引</p>
+                            <p class="hint">💡 你可以在「设置」中上传知识库文档，让回答更贴合你的资料</p>
                         </div>
                     </div>
                 </div>
@@ -152,109 +152,123 @@
                 </div>
             </section>
 
-            <section class="view index-view" id="view-index">
-                <div class="index-header">
+            <section class="view settings-view" id="view-settings">
+                <div class="settings-header">
                     <div>
-                        <h2>索引管理</h2>
-                        <p class="subtitle">管理知识库向量索引，支持构建和重建</p>
+                        <h2>设置</h2>
+                        <p class="subtitle">管理知识库文件与向量索引</p>
                     </div>
                 </div>
 
-                <div class="index-cards">
-                    <div class="card index-status-card">
-                        <div class="card-header">
-                            <h3>当前索引状态</h3>
-                            <span class="badge" id="badge-index">加载中...</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="metric-row">
-                                <div class="metric">
-                                    <span class="metric-value" id="metric-chunks">-</span>
-                                    <span class="metric-label">文本块</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-value" id="metric-files">-</span>
-                                    <span class="metric-label">知识库文件</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-value" id="metric-time">-</span>
-                                    <span class="metric-label">构建时间</span>
-                                </div>
-                            </div>
+                <div class="settings-tabs">
+                    <button class="settings-tab active" data-tab="index">索引管理</button>
+                    <button class="settings-tab" data-tab="docs">知识库文件</button>
+                </div>
+
+                <div class="settings-panel" id="view-index">
+                    <div class="index-header">
+                        <div>
+                            <h2>索引管理</h2>
+                            <p class="subtitle">管理知识库向量索引，添加文档后会自动增量更新</p>
                         </div>
                     </div>
 
-                    <div class="card index-actions-card">
-                        <div class="card-header">
-                            <h3>索引操作</h3>
-                        </div>
-                        <div class="card-body">
-                            <p class="card-desc">首次使用或添加新文档后，需要构建索引。重建会清空旧索引并重新处理所有文件。</p>
-                            <div class="button-group">
-                                <button class="btn-primary" id="btn-build">
-                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5"/></svg>
-                                    构建索引
-                                </button>
-                                <button class="btn-secondary" id="btn-rebuild">
-                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-                                    重建索引
-                                </button>
+                    <div class="index-cards">
+                        <div class="card index-status-card">
+                            <div class="card-header">
+                                <h3>当前索引状态</h3>
+                                <span class="badge" id="badge-index">加载中...</span>
                             </div>
-                            <div class="progress-wrapper" id="progress-wrapper" style="display:none;">
-                                <div class="progress-bar">
-                                    <div class="progress-fill" id="progress-fill"></div>
+                            <div class="card-body">
+                                <div class="metric-row">
+                                    <div class="metric">
+                                        <span class="metric-value" id="metric-chunks">-</span>
+                                        <span class="metric-label">文本块</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-value" id="metric-files">-</span>
+                                        <span class="metric-label">知识库文件</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-value" id="metric-time">-</span>
+                                        <span class="metric-label">构建时间</span>
+                                    </div>
                                 </div>
-                                <span class="progress-text" id="progress-text">正在构建...</span>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="card files-card">
-                        <div class="card-header">
-                            <h3>知识库文件列表</h3>
+                        <div class="card index-actions-card">
+                            <div class="card-header">
+                                <h3>索引操作</h3>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-desc">上传新文档后系统会自动增量索引；仅在需要清空旧数据并重新处理全部文件时，才需要手动重建。</p>
+                                <div class="button-group">
+                                    <button class="btn-primary" id="btn-build">
+                                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5"/></svg>
+                                        构建索引
+                                    </button>
+                                    <button class="btn-secondary" id="btn-rebuild">
+                                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                                        重建索引
+                                    </button>
+                                </div>
+                                <div class="progress-wrapper" id="progress-wrapper" style="display:none;">
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" id="progress-fill"></div>
+                                    </div>
+                                    <span class="progress-text" id="progress-text">正在构建...</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="card-body">
-                            <div class="files-list" id="files-list">
-                                <p class="empty-state">暂无数据</p>
+
+                        <div class="card files-card">
+                            <div class="card-header">
+                                <h3>知识库文件列表</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="files-list" id="files-list">
+                                    <p class="empty-state">暂无数据</p>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </section>
 
-            <section class="view docs-view" id="view-docs">
-                <div class="docs-header">
-                    <div>
-                        <h2>知识库文件管理</h2>
-                        <p class="subtitle">上传、删除知识库文件，自动重建索引</p>
-                    </div>
-                </div>
-
-                <div class="docs-content">
-                    <!-- 文件上传区域 -->
-                    <div class="upload-area" id="upload-area">
-                        <div class="upload-zone" id="upload-zone">
-                            <div class="upload-icon">📄</div>
-                            <p>拖拽文件到此处，或 <span class="upload-link">点击选择文件</span></p>
-                            <p class="upload-hint">支持 .md / .pdf / .docx，单个文件最大 50MB</p>
-                            <input type="file" id="file-input" hidden accept=".md,.pdf,.docx" multiple>
+                <div class="settings-panel" id="view-docs" style="display:none;">
+                    <div class="docs-header">
+                        <div>
+                            <h2>知识库文件管理</h2>
+                            <p class="subtitle">上传、删除知识库文件，系统自动增量索引</p>
                         </div>
-                        <div class="upload-progress" id="upload-progress" style="display:none;">
-                            <div class="upload-progress-bar">
-                                <div class="upload-progress-fill" id="upload-progress-fill"></div>
+                    </div>
+
+                    <div class="docs-content">
+                        <!-- 文件上传区域 -->
+                        <div class="upload-area" id="upload-area">
+                            <div class="upload-zone" id="upload-zone">
+                                <div class="upload-icon">📄</div>
+                                <p>拖拽文件到此处，或 <span class="upload-link">点击选择文件</span></p>
+                                <p class="upload-hint">支持 .md / .pdf / .docx，单个文件最大 50MB，上传后自动索引</p>
+                                <input type="file" id="file-input" hidden accept=".md,.pdf,.docx" multiple>
                             </div>
-                            <span class="upload-progress-text" id="upload-progress-text">上传中...</span>
+                            <div class="upload-progress" id="upload-progress" style="display:none;">
+                                <div class="upload-progress-bar">
+                                    <div class="upload-progress-fill" id="upload-progress-fill"></div>
+                                </div>
+                                <span class="upload-progress-text" id="upload-progress-text">上传中...</span>
+                            </div>
                         </div>
-                    </div>
 
-                    <!-- 文件列表 -->
-                    <div class="file-list-section">
-                        <div class="file-list-header">
-                            <h3>知识库文件 <span id="file-count" class="file-count-badge">0</span></h3>
-                            <button class="btn-refresh-files" id="btn-refresh-files">刷新</button>
-                        </div>
-                        <div class="file-list" id="file-list">
-                            <div class="file-list-empty">加载中...</div>
+                        <!-- 文件列表 -->
+                        <div class="file-list-section">
+                            <div class="file-list-header">
+                                <h3>知识库文件 <span id="file-count" class="file-count-badge">0</span></h3>
+                                <button class="btn-refresh-files" id="btn-refresh-files">刷新</button>
+                            </div>
+                            <div class="file-list" id="file-list">
+                                <div class="file-list-empty">加载中...</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -359,6 +373,20 @@
                             </div>
                             <div class="evaluation-comment" id="evaluation-comment"></div>
                             <div class="evaluation-tags" id="evaluation-tags"></div>
+                            <div class="evaluation-actions" id="evaluation-actions">
+                                <button class="btn-primary" id="btn-next-question">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    下一题
+                                </button>
+                                <button class="btn-secondary" id="btn-reanswer">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M12 7a5 5 0 11-1.5-3.5M12 3v3H9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    再答一次
+                                </button>
+                                <button class="btn-secondary" id="btn-end-after-answer">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v4H2zM2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                                    结束面试
+                                </button>
+                            </div>
                         </div>
 
                         <!-- 知识点覆盖统计 -->
@@ -439,6 +467,61 @@
                                 查看历史
                             </button>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="view review-view" id="view-review">
+                <div class="review-header">
+                    <div>
+                        <h2>复习中心</h2>
+                        <p class="subtitle">回看面试记录，针对薄弱知识点持续练习</p>
+                    </div>
+                </div>
+
+                <div class="review-content">
+                    <!-- 今日一题 -->
+                    <div class="card review-today-card">
+                        <div class="card-header">
+                            <h3>今日一题</h3>
+                            <span class="badge" id="today-position">Java后端</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="today-placeholder" id="today-placeholder">加载中...</div>
+                            <div class="today-question" id="today-question" style="display:none;">
+                                <div class="today-tags" id="today-tags"></div>
+                                <p class="today-text" id="today-text"></p>
+                                <div class="today-actions">
+                                    <button class="btn-secondary btn-sm" id="btn-today-refresh">
+                                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M12 7a5 5 0 11-1.5-3.5M12 3v3H9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        换一题
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 薄弱点画像 -->
+                    <div class="review-section">
+                        <div class="review-section-header">
+                            <h3>薄弱点画像</h3>
+                            <span class="review-section-sub" id="stats-total">暂无数据</span>
+                        </div>
+                        <div class="weak-stats" id="weak-stats">
+                            <div class="empty-state">完成面试后，这里会聚合你的薄弱知识点。</div>
+                        </div>
+                    </div>
+
+                    <!-- 面试历史 -->
+                    <div class="review-section">
+                        <div class="review-section-header">
+                            <h3>面试记录</h3>
+                            <button class="btn-refresh-files" id="btn-refresh-history">刷新</button>
+                        </div>
+                        <div class="history-list" id="history-list">
+                            <div class="empty-state" id="history-empty">暂无面试记录，去「AI面试」开始第一场吧。</div>
+                        </div>
+                        <div class="history-detail" id="history-detail" style="display:none;"></div>
                     </div>
                 </div>
             </section>
