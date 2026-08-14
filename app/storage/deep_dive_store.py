@@ -90,6 +90,16 @@ class DeepDiveStore:
                                (session_id,)).fetchone()
             return dict(row) if row else None
 
+    def get_session_by_question(self, question_id: str) -> dict | None:
+        """通过 question_id 反查所属深挖会话。"""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """SELECT s.* FROM deep_dive_sessions s
+                   JOIN deep_dive_questions q ON q.session_id = s.id
+                   WHERE q.id = ?""",
+                (question_id,)).fetchone()
+            return dict(row) if row else None
+
     def get_questions(self, session_id: str) -> list[dict]:
         with self._get_conn() as conn:
             rows = conn.execute(
