@@ -24,9 +24,14 @@ def _get_eval_service():
 @router.post("/generate-testset")
 async def generate_testset(req: GenTestsetRequest):
     try:
-        from app.main import testset_generator
+        from app.main import testset_generator, doc_store
         if testset_generator is None:
             raise HTTPException(status_code=503, detail="Testset generator not initialized")
+        data = doc_store.load()
+        testset_generator.chunks = (
+            [{"content": c["content"], "source": c["source_file"]} for c in data["chunks"]]
+            if data and data.get("chunks") else []
+        )
         return await testset_generator.generate(limit=req.limit)
     except HTTPException:
         raise

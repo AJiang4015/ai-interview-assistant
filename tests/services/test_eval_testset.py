@@ -48,6 +48,19 @@ async def test_generate_handles_llm_failure(tmp_path):
     res = await gen.generate()
     assert res["created"] == 0 and res["total"] == 0
 
+@pytest.mark.asyncio
+async def test_generate_handles_fenced_json(tmp_path):
+    class FenceLLM:
+        async def chat(self, prompt, system=None):
+            return '```json\n{"question": "什么是围栏JSON?"}\n```'
+    path = tmp_path / "t.json"
+    gen = TestSetGenerator(llm=FenceLLM(), testset_path=str(path),
+                           chunks=[{"content": "c1", "source": "a.md"}])
+    res = await gen.generate()
+    assert res["created"] == 1
+    items = gen.load()
+    assert items[0]["question"] == "什么是围栏JSON?"
+
 def test_clear(tmp_path):
     gen = make_gen(tmp_path)
     gen.clear()

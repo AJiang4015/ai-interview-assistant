@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from app.utils.logger import get_logger
@@ -20,6 +21,23 @@ class TestSetGenerator:
         self.testset_path = Path(testset_path)
         self.chunks = chunks or []
         self.evaluate_every = evaluate_every
+
+    def _parse_json(self, text: str) -> dict | None:
+        if not text:
+            return None
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        m = re.search(r"(\{.*\})", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                pass
+        return None
 
     def load(self):
         if not self.testset_path.exists():
@@ -43,7 +61,7 @@ class TestSetGenerator:
                 continue
             try:
                 text = await self.llm.chat(GEN_PROMPT.format(source=src, chunk=chunk["content"]))
-                parsed = json.loads(text) if text.strip().startswith("{") else {}
+                parsed = self._parse_json(text) or {}
                 question = parsed.get("question", "")
             except Exception as e:
                 logger.warning(f"Testset gen failed for {src}: {e}")

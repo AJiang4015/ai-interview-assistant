@@ -1,6 +1,7 @@
 # app/services/evaluation_service.py
-import asyncio
 import json
+import re
+import asyncio
 import time
 from pathlib import Path
 
@@ -31,6 +32,24 @@ CONTEXT_RELEVANCE_PROMPT = """判断给定的检索上下文与问题是否相�
 {context}
 请只以 JSON 输出：{{"score": <0.0-1.0>}}
 """
+
+
+def _parse_json(text: str) -> dict | None:
+    if not text:
+        return None
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"(\{.*\})", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    return None
 
 
 def _aggregate_retrieval(metrics: list[dict]) -> dict:
@@ -76,9 +95,17 @@ class EvaluationService:
     async def _retrieve(self, query: str, use_hybrid: bool, use_rerank: bool) -> list[dict]:
         """按配置检索，返回按相关性排序的 chunk 列表：[{content, source_file}]。"""
         if use_hybrid and self.hybrid and self.hybrid.enabled:
-            results = await self.hybrid.retrieve(query, top_k=20)
+            try:
+                results = await self.hybrid.retrieve(query, top_k=20)
+            except Exception as e:
+                logger.warning(f"Eval hybrid retrieve failed: {e}")
+                return []
         else:
-            vec = await self.embedding.encode([query])
+            try:
+                vec = await self.embedding.encode([query])
+            except Exception as e:
+                logger.warning(f"Eval embedding failed: {e}")
+                return []
             if vec.size == 0:
                 return []
             results = self.faiss.search(vec[0], 20)
@@ -94,7 +121,9 @@ class EvaluationService:
     async def _judge(self, prompt: str) -> float:
         try:
             text = await self.llm.chat(prompt)
-            data = json.loads(text)
+            data = _parse_json(text)
+            if data is None:
+                return 0.0
             return max(0.0, min(1.0, float(data.get("score", 0))))
         except Exception as e:
             logger.warning(f"Judge failed: {e}")
@@ -163,7 +192,8 @@ class EvaluationService:
             return json.load(f)
 
     def _save_report(self, report):
-        name = report["timestamp"] + ".json"
+        import uuid
+        name = f"{report['timestamp']}_{uuid.uuid4().hex[:6]}.json"
         with open(REPORT_DIR / name, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
