@@ -2415,10 +2415,21 @@ if (evalEls.btnGen) {
             const res = await fetch('/api/eval/run', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
             const data = await res.json();
-            renderEvalResult(data);
-        } catch (e) { showToast('评测失败: ' + e.message, 'error'); }
+            await pollEvalJob(data.job_id);
+        } catch (e) { showToast('启动评测失败: ' + e.message, 'error'); }
         finally { evalEls.btnRun.disabled = false; evalEls.btnRun.textContent = '运行评测'; }
     });
+}
+
+async function pollEvalJob(jobId) {
+    for (let i = 0; i < 600; i++) {  // 最多轮询约 20 分钟
+        const res = await fetch(`/api/eval/jobs/${jobId}`);
+        const job = await res.json();
+        if (job.status === 'done') { renderEvalResult(job.result); return; }
+        if (job.status === 'error') { showToast('评测失败: ' + (job.error || '未知'), 'error'); return; }
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    showToast('评测超时，请稍后重试', 'error');
 }
 
 function renderEvalResult(data) {

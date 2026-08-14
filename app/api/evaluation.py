@@ -37,9 +37,21 @@ async def generate_testset(req: GenTestsetRequest):
 @router.post("/run")
 async def run_eval(req: RunEvalRequest):
     try:
-        return await _get_eval_service().run(req.configs)
+        import asyncio
+        svc = _get_eval_service()
+        job_id = svc.create_job(req.configs)
+        asyncio.create_task(svc.run_async(job_id, req.configs))
+        return {"job_id": job_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/jobs/{job_id}")
+async def get_job(job_id: str):
+    job = _get_eval_service().get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.get("/reports")

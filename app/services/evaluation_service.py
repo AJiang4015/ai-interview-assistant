@@ -53,7 +53,25 @@ class EvaluationService:
         self.reranker = reranker
         self.testset_path = Path(testset_path)
         self.top_k = top_k
+        self._jobs: dict[str, dict] = {}
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    def create_job(self, configs: list[dict] | None = None) -> str:
+        import uuid
+        job_id = uuid.uuid4().hex[:12]
+        self._jobs[job_id] = {"status": "running", "result": None, "error": None}
+        return job_id
+
+    def get_job(self, job_id: str) -> dict | None:
+        return self._jobs.get(job_id)
+
+    async def run_async(self, job_id: str, configs: list[dict] | None = None):
+        """后台执行评测，结果写入 job。"""
+        try:
+            result = await self.run(configs)
+            self._jobs[job_id] = {"status": "done", "result": result, "error": None}
+        except Exception as e:
+            self._jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
 
     async def _retrieve(self, query: str, use_hybrid: bool, use_rerank: bool) -> list[dict]:
         """按配置检索，返回按相关性排序的 chunk 列表：[{content, source_file}]。"""
