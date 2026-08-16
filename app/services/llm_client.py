@@ -4,6 +4,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 from app.config import settings
 from app.exceptions import LLMAPIError
+from app.services import monitor
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +80,13 @@ class LLMClient:
                 response = await client.post(BAILIAN_API, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
+                usage = data.get("usage", {})
+                monitor.emit_cost(
+                    self.model,
+                    in_n=usage.get("prompt_tokens", 0),
+                    out_n=usage.get("completion_tokens", 0),
+                    session_id="unknown",  # 单次 chat 无会话上下文；会话级由上层注入
+                )
                 return data["choices"][0]["message"]["content"]
         except httpx.HTTPError as e:
             raise LLMAPIError(f"LLM API request failed: {e}") from e
