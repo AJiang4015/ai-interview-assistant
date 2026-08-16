@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
+from app.observability import init_tracing
 from app.api.routes import router
 from app.api.auth import router as auth_router
 from app.api.interview import router as interview_router
@@ -69,6 +70,8 @@ async def lifespan(app: FastAPI):
     global evaluation_service, testset_generator
 
     logger.info("Initializing services...")
+
+    init_tracing(app)
 
     faiss_store = FaissStore()
     doc_store = DocStore(settings.idx_path)

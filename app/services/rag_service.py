@@ -2,6 +2,7 @@ import json
 import uuid
 
 from app.config import settings
+from app.observability import tracer
 from app.api.schemas import QueryResponse, SourceInfo
 from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
@@ -90,7 +91,13 @@ class RAGService:
         unique_results = self._deduplicate_results(final_results)
         context = "\n---\n".join([r.content for r in unique_results])
         prompt = await self._build_prompt(session_id, question, context)
-        answer = await self.llm.chat(prompt, SYSTEM_PROMPT)
+        if tracer is not None:
+            with tracer.start_as_current_span("rag.llm_call") as span:
+                answer = await self.llm.chat(prompt, SYSTEM_PROMPT)
+                span.set_attribute("llm.prompt_chars", len(prompt))
+                span.set_attribute("llm.answer_chars", len(answer) if answer else 0)
+        else:
+            answer = await self.llm.chat(prompt, SYSTEM_PROMPT)
         await self._save_to_session(session_id, question, answer, unique_results)
 
         sources = [

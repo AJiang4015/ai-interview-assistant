@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import faiss
 import numpy as np
+
+from app.observability import tracer, trace
 
 
 @dataclass
@@ -49,6 +52,17 @@ class FaissStore:
     def search(self, query_vector: np.ndarray, top_k: int = 5) -> list[SearchResult]:
         if self.index is None or self.index.ntotal == 0:
             return []
+        if tracer is None or trace is None:
+            return self._search_inner(query_vector, top_k)
+        with tracer.start_as_current_span("vector.store", kind=trace.SpanKind.CLIENT) as span:
+            span.set_attribute("db.system", "faiss")
+            start = time.perf_counter()
+            results = self._search_inner(query_vector, top_k)
+            span.set_attribute("vector.exec_ms", (time.perf_counter() - start) * 1000)
+            span.set_attribute("vector.recall_count", len(results))
+            return results
+
+    def _search_inner(self, query_vector: np.ndarray, top_k: int = 5) -> list[SearchResult]:
         qv = query_vector.reshape(1, -1).astype(np.float32)
         faiss.normalize_L2(qv)
         k = min(top_k, self.index.ntotal)
