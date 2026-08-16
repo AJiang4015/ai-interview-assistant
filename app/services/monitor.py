@@ -8,6 +8,7 @@ except ImportError:  # pragma: no cover - 依赖未安装时优雅降级
     _OTEL_AVAILABLE = False
 
 import logging
+import os
 
 from app.config import settings
 from app.services import session_cost
@@ -30,6 +31,23 @@ _vector_total = {"ok": 0, "empty": 0}
 
 def _init_otel():
     global cost_counter, in_tokens, out_tokens, faithful_counter, vector_query_counter
+    # 配置全局 MeterProvider + 导出管道；任何异常静默降级为纯内存计数
+    try:
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+        endpoint = os.getenv("OTLP_METRICS_ENDPOINT")
+        if not endpoint:
+            if "/traces" in settings.otel_endpoint:
+                endpoint = settings.otel_endpoint.replace("/traces", "/metrics")
+            else:
+                endpoint = settings.otel_endpoint + "/v1/metrics"
+        reader = PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=endpoint))
+        metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+    except Exception:
+        _logger.debug("OTel metrics provider init failed", exc_info=True)
+
     meter = metrics.get_meter("ai.cost")
     cost_counter = meter.create_counter("ai.token_cost", unit="USD")
     in_tokens = meter.create_counter("ai.in_tokens", unit="tokens")
