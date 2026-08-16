@@ -7,10 +7,14 @@ except ImportError:  # pragma: no cover - 依赖未安装时优雅降级
     metrics = None
     _OTEL_AVAILABLE = False
 
+import logging
+
 from app.config import settings
 
 # 全局累计（测试与降级模式下可断言）
 _total_cost = 0.0
+
+_logger = logging.getLogger(__name__)
 
 cost_counter = None
 in_tokens = None
@@ -25,17 +29,17 @@ def _init_otel():
     out_tokens = meter.create_counter("ai.out_tokens", unit="tokens")
 
 
-def emit_cost(model: str, in_tokens: int, out_tokens: int, session_id: str) -> None:
+def emit_cost(model: str, in_n: int, out_n: int, session_id: str) -> None:
     """按会话累加 Token 成本。OTel 可用则上报，否则仅更新内存计数。"""
     global _total_cost
     price = settings.token_price.get(model, {})
-    cost = (in_tokens * price.get("input", 0) + out_tokens * price.get("output", 0)) / 1_000_000
+    cost = (in_n * price.get("input", 0) + out_n * price.get("output", 0)) / 1_000_000
     _total_cost += cost
     if settings.otel_enabled and _OTEL_AVAILABLE and cost_counter is not None:
         attrs = {"model": model, "session": session_id}
         cost_counter.add(cost, attrs)
-        in_tokens.add(in_tokens, attrs)
-        out_tokens.add(out_tokens, attrs)
+        in_tokens.add(in_n, attrs)
+        out_tokens.add(out_n, attrs)
 
 
 def init_monitor() -> None:
@@ -45,4 +49,4 @@ def init_monitor() -> None:
     try:
         _init_otel()
     except Exception:
-        pass  # 降级为纯内存计数
+        _logger.debug("OTel init failed", exc_info=True)  # 降级为纯内存计数
