@@ -38,6 +38,11 @@ def test_evaluate_score_invalid_json_no_alert():
     assert m._evaluate_score("not json") is False
 
 
+def test_evaluate_score_non_numeric_score_returns_false():
+    m = EvalMonitor(FakeLLM(), sample_rate=1.0, threshold=0.6)
+    assert m._evaluate_score('{"score": "abc"}') is False
+
+
 def test_evaluate_score_fenced_json():
     m = EvalMonitor(FakeLLM(), sample_rate=1.0, threshold=0.6)
     assert _parse_json("```json\n{\"score\": 0.3}\n```") == {"score": 0.3}

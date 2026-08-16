@@ -33,8 +33,9 @@ class EvalMonitor:
         self.threshold = threshold if threshold is not None else settings.faithfulness_threshold
 
     async def maybe_eval(self, query: str, context: str, answer: str,
-                         session_id: str | None = None) -> float | None:
-        """按采样率决定是否评估。返回 Faithfulness 分数；未采样返回 None。"""
+                         session_id: str | None = None) -> bool | None:
+        """按采样率决定是否评估。返回 True 表示采样命中且 Faithfulness 低于阈值（幻觉预埋命中），
+        False 表示未命中，None 表示未采样或 LLM 失败。"""
         if random.random() > self.sample_rate:
             return None
         prompt = "判断回答是否忠于给定的检索上下文（无幻觉）。\n上下文：\n{context}\n\n回答：\n{answer}\n请只以 JSON 输出：{{\"score\": <0.0-1.0>}}".format(
@@ -51,5 +52,9 @@ class EvalMonitor:
         data = _parse_json(llm_text)
         if data is None:
             return False
-        score = max(0.0, min(1.0, float(data.get("score", 0))))
+        try:
+            raw_score = float(data.get("score", 0))
+        except (TypeError, ValueError):
+            return False
+        score = max(0.0, min(1.0, raw_score))
         return score < self.threshold
