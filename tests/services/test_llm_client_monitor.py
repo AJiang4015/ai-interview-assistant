@@ -58,3 +58,27 @@ def test_chat_without_usage_defaults_to_zero():
         out_n=0,
         session_id="unknown",
     )
+
+
+def test_chat_passes_session_id():
+    fake_resp = {
+        "choices": [{"message": {"content": "answer"}}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+    }
+    client_class = _build_usage_response(fake_resp)
+
+    client = LLMClient()
+    payload = {"model": client.model, "messages": []}
+    headers = {"Authorization": "Bearer x"}
+
+    with patch("app.services.llm_client.httpx.AsyncClient", client_class), \
+         patch("app.services.llm_client.monitor.emit_cost") as emit:
+        result = _run(client._chat_with_retry(payload, headers, session_id="s-x"))
+
+    assert result == "answer"
+    emit.assert_called_once_with(
+        "qwen3.7-max",
+        in_n=100,
+        out_n=50,
+        session_id="s-x",
+    )

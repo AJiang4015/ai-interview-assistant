@@ -11,6 +11,7 @@ from app.api.routes import router
 from app.api.auth import router as auth_router
 from app.api.interview import router as interview_router
 from app.services.embedding import EmbeddingService
+from app.services import monitor
 from app.services.llm_client import LLMClient
 from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
@@ -72,6 +73,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing services...")
 
     init_tracing(app)
+    monitor.init_monitor()
 
     faiss_store = FaissStore()
     doc_store = DocStore(settings.idx_path)

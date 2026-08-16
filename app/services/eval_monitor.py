@@ -4,6 +4,7 @@ import random
 import re
 
 from app.config import settings
+from app.services import monitor
 
 
 def _parse_json(text: str) -> dict | None:
@@ -57,4 +58,6 @@ class EvalMonitor:
         except (TypeError, ValueError):
             return False
         score = max(0.0, min(1.0, raw_score))
-        return score < self.threshold
+        is_halluc = score < self.threshold
+        monitor.record_faithfulness(is_halluc)
+        return is_halluc

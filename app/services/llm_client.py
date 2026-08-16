@@ -19,7 +19,7 @@ class LLMClient:
         self.temperature = settings.llm_temperature
         self.timeout = settings.request_timeout
 
-    async def chat(self, prompt: str, system: str | None = None) -> str:
+    async def chat(self, prompt: str, system: str | None = None, session_id: str | None = None) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -36,7 +36,7 @@ class LLMClient:
         }
 
         try:
-            return await self._chat_with_retry(payload, headers)
+            return await self._chat_with_retry(payload, headers, session_id=session_id)
         except LLMAPIError:
             raise
         except RetryError as e:
@@ -44,7 +44,7 @@ class LLMClient:
         except Exception as e:
             raise LLMAPIError(f"LLM chat failed: {e}") from e
 
-    async def chat_stream(self, prompt: str, system: str | None = None):
+    async def chat_stream(self, prompt: str, system: str | None = None, session_id: str | None = None):
         """Stream chat completions, yielding text chunks as they arrive."""
         messages = []
         if system:
@@ -64,7 +64,7 @@ class LLMClient:
         }
 
         try:
-            async for chunk in self._chat_stream_retry(payload, headers):
+            async for chunk in self._chat_stream_retry(payload, headers, session_id=session_id):
                 yield chunk
         except LLMAPIError:
             raise
@@ -74,7 +74,7 @@ class LLMClient:
             raise LLMAPIError(f"LLM chat stream failed: {e}") from e
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
-    async def _chat_with_retry(self, payload: dict, headers: dict) -> str:
+    async def _chat_with_retry(self, payload: dict, headers: dict, session_id: str | None = None) -> str:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(BAILIAN_API, json=payload, headers=headers)
@@ -85,15 +85,17 @@ class LLMClient:
                     self.model,
                     in_n=usage.get("prompt_tokens", 0),
                     out_n=usage.get("completion_tokens", 0),
-                    session_id="unknown",  # 单次 chat 无会话上下文；会话级由上层注入
+                    session_id=session_id or "unknown",
                 )
                 return data["choices"][0]["message"]["content"]
         except httpx.HTTPError as e:
             raise LLMAPIError(f"LLM API request failed: {e}") from e
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
-    async def _chat_stream_retry(self, payload: dict, headers: dict):
+    async def _chat_stream_retry(self, payload: dict, headers: dict, session_id: str | None = None):
         try:
+            sum_pt = 0
+            sum_ct = 0
             async with httpx.AsyncClient(timeout=self.timeout * 3) as client:
                 async with client.stream("POST", BAILIAN_API, json=payload, headers=headers) as response:
                     response.raise_for_status()
@@ -104,6 +106,10 @@ class LLMClient:
                                 break
                             try:
                                 data = json.loads(data_str)
+                                usage = data.get("usage")
+                                if usage:
+                                    sum_pt += usage.get("prompt_tokens", 0)
+                                    sum_ct += usage.get("completion_tokens", 0)
                                 if "choices" in data and len(data["choices"]) > 0:
                                     delta = data["choices"][0].get("delta", {})
                                     content = delta.get("content", "")
@@ -111,5 +117,11 @@ class LLMClient:
                                         yield content
                             except json.JSONDecodeError:
                                 logger.warning(f"Failed to parse stream data: {data_str[:100]}")
+            monitor.emit_cost(
+                self.model,
+                in_n=sum_pt,
+                out_n=sum_ct,
+                session_id=session_id or "unknown",
+            )
         except httpx.HTTPError as e:
             raise LLMAPIError(f"LLM API stream request failed: {e}") from e
