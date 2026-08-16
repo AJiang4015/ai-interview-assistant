@@ -1,0 +1,12 @@
+groups:
+  - name: ai_quality
+    rules:
+      - alert: 幻觉率过高
+        expr: histogram_quantile(0.5, eval_faithfulness_bucket) < 0.6
+        for: 5m
+      - alert: 会话成本超标
+        expr: sum by(session)(ai_token_cost) > 5
+        for: 10m
+      - alert: 向量检索空结果激增
+        expr: sum(rate(vector_query_total{error="empty"}[5m])) > 10
+        for: 5m

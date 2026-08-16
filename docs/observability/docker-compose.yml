@@ -1,0 +1,13 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    ports: ["4318:4318"]
+  prometheus:
+    image: prom/prometheus
+    ports: ["9090:9090"]
+  tempo:
+    image: grafana/tempo:latest
+    ports: ["3200:3200"]
+  grafana:
+    image: grafana/grafana
+    ports: ["3000:3000"]
