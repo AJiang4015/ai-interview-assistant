@@ -94,8 +94,8 @@ class LLMClient:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
     async def _chat_stream_retry(self, payload: dict, headers: dict, session_id: str | None = None):
         try:
-            sum_pt = 0
-            sum_ct = 0
+            prompt_tokens_total = 0
+            completion_tokens_total = 0
             async with httpx.AsyncClient(timeout=self.timeout * 3) as client:
                 async with client.stream("POST", BAILIAN_API, json=payload, headers=headers) as response:
                     response.raise_for_status()
@@ -108,8 +108,8 @@ class LLMClient:
                                 data = json.loads(data_str)
                                 usage = data.get("usage")
                                 if usage:
-                                    sum_pt += usage.get("prompt_tokens", 0)
-                                    sum_ct += usage.get("completion_tokens", 0)
+                                    prompt_tokens_total = usage.get("prompt_tokens", 0)
+                                    completion_tokens_total = usage.get("completion_tokens", 0)
                                 if "choices" in data and len(data["choices"]) > 0:
                                     delta = data["choices"][0].get("delta", {})
                                     content = delta.get("content", "")
@@ -119,8 +119,8 @@ class LLMClient:
                                 logger.warning(f"Failed to parse stream data: {data_str[:100]}")
             monitor.emit_cost(
                 self.model,
-                in_n=sum_pt,
-                out_n=sum_ct,
+                in_n=prompt_tokens_total,
+                out_n=completion_tokens_total,
                 session_id=session_id or "unknown",
             )
         except httpx.HTTPError as e:

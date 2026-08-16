@@ -63,7 +63,6 @@ class RAGService:
                 logger.error(f"会话 {session_id} 检测到幻觉")
             if session_cost.is_over_budget(session_id):
                 logger.warning(f"会话 {session_id} Token 成本超预算")
-            monitor.record_faithfulness(bool(halluc))
         except Exception:
             logger.exception(f"流式幻觉评估失败：{session_id}")
 
@@ -90,10 +89,12 @@ class RAGService:
             raw_results = self.faiss.search(query_vector[0], self.top_k)
 
         if not raw_results:
+            monitor.record_vector_query(True)
             return QueryResponse(
                 answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
                 sources=[], retrieved_chunks=[], session_id=session_id,
             )
+        monitor.record_vector_query(False)
 
         # 3. 重排序
         if self.reranker and self.reranker.enabled:
@@ -127,7 +128,6 @@ class RAGService:
             )
             if halluc:
                 logger.error(f"会话 {session_id} 检测到幻觉")
-            monitor.record_faithfulness(bool(halluc))
         except Exception:
             logger.exception(f"幻觉评估失败：{session_id}")
 
@@ -189,6 +189,7 @@ class RAGService:
 
         if not raw_results:
             logger.warning("No relevant chunks found")
+            monitor.record_vector_query(True)
             yield self._sse_event("retrieval", {"sources": [], "chunks": []})
             yield self._sse_event("done", {
                 "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
@@ -196,6 +197,7 @@ class RAGService:
                 "session_id": session_id,
             })
             return
+        monitor.record_vector_query(False)
 
         # 4. 重排序
         if self.reranker and self.reranker.enabled:

@@ -1,5 +1,6 @@
 import asyncio
 
+from app.services import monitor
 from app.services.eval_monitor import _parse_json, EvalMonitor
 
 
@@ -73,3 +74,31 @@ def test_maybe_eval_handles_llm_failure():
     m = EvalMonitor(FailLLM(), sample_rate=1.0, threshold=0.6)
     score = asyncio.run(m.maybe_eval("q", "ctx", "ans"))
     assert score is None
+
+
+def test_maybe_eval_not_sampled_does_not_record_faithful():
+    monitor._faithful_total = {"faithful": 0, "hallucination": 0}
+    m = EvalMonitor(FakeLLM('{"score": 0.9}'), sample_rate=0.0, threshold=0.6)
+    score = asyncio.run(m.maybe_eval("q", "ctx", "ans"))
+    assert score is None
+    assert monitor._faithful_total == {"faithful": 0, "hallucination": 0}
+
+
+def test_maybe_eval_llm_failure_does_not_record_faithful():
+    class FailLLM:
+        async def chat(self, prompt, system=None):
+            raise RuntimeError("timeout")
+    monitor._faithful_total = {"faithful": 0, "hallucination": 0}
+    m = EvalMonitor(FailLLM(), sample_rate=1.0, threshold=0.6)
+    score = asyncio.run(m.maybe_eval("q", "ctx", "ans"))
+    assert score is None
+    assert monitor._faithful_total == {"faithful": 0, "hallucination": 0}
+
+
+def test_maybe_eval_sampled_records_once():
+    monitor._faithful_total = {"faithful": 0, "hallucination": 0}
+    m = EvalMonitor(FakeLLM('{"score": 0.3}'), sample_rate=1.0, threshold=0.6)
+    score = asyncio.run(m.maybe_eval("q", "ctx", "ans"))
+    assert score is True
+    assert monitor._faithful_total["hallucination"] == 1
+    assert monitor._faithful_total["faithful"] == 0
