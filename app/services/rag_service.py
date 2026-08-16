@@ -1,8 +1,12 @@
+import asyncio
 import json
 import uuid
 
 from app.config import settings
+from app.observability import tracer
 from app.api.schemas import QueryResponse, SourceInfo
+from app.services import monitor, session_cost
+from app.services.eval_monitor import EvalMonitor
 from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
 from app.storage.faiss_store import FaissStore
@@ -46,6 +50,21 @@ class RAGService:
         self.reranker = reranker
         self.cache = cache_service
         self.top_k = settings.top_k
+        self.eval_monitor = EvalMonitor(self.llm)
+
+    async def _eval_stream(self, query: str, context: str, answer: str,
+                           session_id: str) -> None:
+        """后台执行流式路径的幻觉评估与指标记账，失败不中断主流程。"""
+        try:
+            halluc = await self.eval_monitor.maybe_eval(
+                query, context, answer, session_id=session_id
+            )
+            if halluc:
+                logger.error(f"会话 {session_id} 检测到幻觉")
+            if session_cost.is_over_budget(session_id):
+                logger.warning(f"会话 {session_id} Token 成本超预算")
+        except Exception:
+            logger.exception(f"流式幻觉评估失败：{session_id}")
 
     async def query(
         self, question: str, session_id: str | None = None
@@ -70,10 +89,12 @@ class RAGService:
             raw_results = self.faiss.search(query_vector[0], self.top_k)
 
         if not raw_results:
+            monitor.record_vector_query(True)
             return QueryResponse(
                 answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
                 sources=[], retrieved_chunks=[], session_id=session_id,
             )
+        monitor.record_vector_query(False)
 
         # 3. 重排序
         if self.reranker and self.reranker.enabled:
@@ -90,7 +111,26 @@ class RAGService:
         unique_results = self._deduplicate_results(final_results)
         context = "\n---\n".join([r.content for r in unique_results])
         prompt = await self._build_prompt(session_id, question, context)
-        answer = await self.llm.chat(prompt, SYSTEM_PROMPT)
+        if tracer is not None:
+            with tracer.start_as_current_span("rag.llm_call") as span:
+                answer = await self.llm.chat(prompt, SYSTEM_PROMPT, session_id=session_id)
+                span.set_attribute("llm.prompt_chars", len(prompt))
+                span.set_attribute("llm.answer_chars", len(answer) if answer else 0)
+        else:
+            answer = await self.llm.chat(prompt, SYSTEM_PROMPT, session_id=session_id)
+
+        if session_cost.is_over_budget(session_id):
+            logger.warning(f"会话 {session_id} Token 成本超预算")
+
+        try:
+            halluc = await self.eval_monitor.maybe_eval(
+                question, context, answer, session_id=session_id
+            )
+            if halluc:
+                logger.error(f"会话 {session_id} 检测到幻觉")
+        except Exception:
+            logger.exception(f"幻觉评估失败：{session_id}")
+
         await self._save_to_session(session_id, question, answer, unique_results)
 
         sources = [
@@ -149,6 +189,7 @@ class RAGService:
 
         if not raw_results:
             logger.warning("No relevant chunks found")
+            monitor.record_vector_query(True)
             yield self._sse_event("retrieval", {"sources": [], "chunks": []})
             yield self._sse_event("done", {
                 "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
@@ -156,6 +197,7 @@ class RAGService:
                 "session_id": session_id,
             })
             return
+        monitor.record_vector_query(False)
 
         # 4. 重排序
         if self.reranker and self.reranker.enabled:
@@ -188,7 +230,7 @@ class RAGService:
 
         answer_parts = []
         try:
-            async for chunk in self.llm.chat_stream(prompt, SYSTEM_PROMPT):
+            async for chunk in self.llm.chat_stream(prompt, SYSTEM_PROMPT, session_id=session_id):
                 answer_parts.append(chunk)
                 yield self._sse_event("token", {"content": chunk})
         except Exception as e:
@@ -197,6 +239,14 @@ class RAGService:
             return
 
         answer = "".join(answer_parts)
+
+        if session_cost.is_over_budget(session_id):
+            logger.warning(f"会话 {session_id} Token 成本超预算")
+
+        # 后台幻觉评估，不阻塞 SSE
+        asyncio.create_task(self._eval_stream(
+            query=question, context=context, answer=answer, session_id=session_id,
+        ))
 
         await self._save_to_session(session_id, question, answer, unique_results)
 

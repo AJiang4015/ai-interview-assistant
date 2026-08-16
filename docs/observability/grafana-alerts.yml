@@ -1,0 +1,14 @@
+groups:
+  - name: ai_quality
+    rules:
+      - alert: 幻觉率过高
+        expr: sum(rate(ai_eval_faithful_total{result="hallucination"}[5m])) / clamp_min(sum(rate(ai_eval_faithful_total[5m])), 1) > 0.5
+        for: 10m
+        annotations:
+          summary: 幻觉率过高
+      - alert: 会话成本超标
+        expr: sum by(session)(ai_token_cost) > 5
+        for: 10m
+      - alert: 向量检索空结果激增
+        expr: sum(rate(ai_vector_query_total{error="empty"}[5m])) > 10
+        for: 5m
