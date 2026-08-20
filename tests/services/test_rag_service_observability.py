@@ -10,7 +10,7 @@ from app.storage.faiss_store import SearchResult
 def _make_service(results):
     faiss = MagicMock()
     faiss.is_loaded.return_value = True
-    faiss.search.return_value = results
+    faiss.asearch = AsyncMock(return_value=results)
 
     embedding = MagicMock()
     embedding.encode = AsyncMock(return_value=np.zeros((1, 4)))
