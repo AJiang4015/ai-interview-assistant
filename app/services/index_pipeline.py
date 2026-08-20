@@ -81,7 +81,10 @@ class IndexPipeline:
             if hasattr(self.store, "reset"):
                 self.store.reset()
             self._state = {}
-            self._save_state()
+            try:
+                self._save_state()
+            except Exception as e:
+                logger.error("save_state failed in rebuild: %s", e)
         pending = []
         for name, text in documents:
             key = self._doc_hash(text)
