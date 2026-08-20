@@ -112,4 +112,5 @@ class IndexPipeline:
             "files_processed": progress.processed,
             "failed_docs": progress.failed,
             "progress": {"processed": progress.processed, "total": progress.total},
+            "chunks": all_chunks,  # 本次实际入库的 chunk（供 doc_store 落盘，避免伪造）
         }

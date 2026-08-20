@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.config import settings
 from app.api.schemas import BuildIndexResponse, IndexStatusResponse
 from app.services.embedding import EmbeddingService
@@ -25,6 +27,7 @@ class IndexService:
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
         )
+        self._pipeline_obj = None
 
     async def build_index(self, rebuild: bool = False) -> BuildIndexResponse:
         kb_files = self.splitter.scan_md_files(settings.kb_path)
@@ -141,3 +144,65 @@ class IndexService:
             total_chunks=len(chunks),
             files_processed=1,
         )
+
+    def _pipeline(self):
+        from app.services.index_pipeline import IndexPipeline
+        from app.services.chunker import Chunker
+        if self._pipeline_obj is None:
+            self._pipeline_obj = IndexPipeline(
+                chunker=Chunker(),
+                embedding=self.embedding,
+                vector_store=self.faiss,
+                sparse=None,  # 稀疏检索由检索侧按需加载
+            )
+        return self._pipeline_obj
+
+    async def rebuild_index_pipeline(self) -> dict:
+        """全量重建：扫描 KB → 走 IndexPipeline 管道入库 → 落 doc_store + 保存向量。"""
+        files = self.splitter.scan_md_files(settings.kb_path)
+        docs = []
+        for f in files:
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning("skip %s: %s", f.name, e)
+                continue
+            docs.append((f.name, text))
+        rep = await self._pipeline().ingest_documents(docs, rebuild=True)
+        chunks = rep.get("chunks") or []
+        if rep["total_chunks"] > 0 and chunks:
+            self.faiss.save(settings.idx_path)
+            self.doc_store.save(chunks)
+        return rep
+
+    async def add_document_pipeline(self, file_path) -> dict:
+        """增量入库单个文件：走 IndexPipeline，追加 doc_store 与向量。"""
+        file_path = Path(file_path)
+        if not file_path.exists():
+            logger.warning("add_document_pipeline: file not found %s", file_path)
+            return {
+                "status": "error",
+                "total_chunks": 0,
+                "files_processed": 0,
+                "failed_docs": [],
+                "progress": {"processed": 0, "total": 0},
+            }
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.error("add_document_pipeline: failed to read %s: %s",
+                         file_path.name, e)
+            return {
+                "status": "error",
+                "total_chunks": 0,
+                "files_processed": 0,
+                "failed_docs": [file_path.name],
+                "progress": {"processed": 0, "total": 1},
+            }
+        rep = await self._pipeline().ingest_documents([(file_path.name, text)],
+                                                       rebuild=False)
+        chunks = rep.get("chunks") or []
+        if rep["total_chunks"] > 0 and chunks:
+            self.faiss.save(settings.idx_path)
+            self.doc_store.append(chunks)
+        return rep
