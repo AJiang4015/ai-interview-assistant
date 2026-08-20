@@ -25,13 +25,17 @@ class SparseRetriever:
     def _resolve(self) -> str:
         if self._requested in ("memory", "whoosh", "sqlite_fts"):
             name = self._requested if self._can_use(self._requested) else "memory"
-        else:  # auto
+        elif self._requested == "auto":
             for cand in ("whoosh", "sqlite_fts", "memory"):
                 if self._can_use(cand):
                     name = cand
                     break
             else:
                 name = "memory"
+        else:  # unknown / unsupported value -> explicitly degrade to memory
+            logger.warning(
+                f"Unknown sparse backend {self._requested!r}, falling back to 'memory'")
+            name = "memory"
         logger.info(f"SparseRetriever backend = {name}")
         return name
 
@@ -65,6 +69,10 @@ class SparseRetriever:
     def _init_sqlite(self):
         import sqlite3
         self._sqlite = sqlite3.connect(settings.bm25_index_path + ".fts.sqlite")
+        try:
+            self._sqlite.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         self._sqlite.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks "
                              "USING FTS5(id, content UNINDEXED, payload)")
 
@@ -82,6 +90,7 @@ class SparseRetriever:
                 self._sqlite.execute(
                     "INSERT INTO chunks(id, payload) VALUES (?, ?)",
                     (str(d["_id"]), d["content"]))
+            self._sqlite.commit()
 
     def search(self, query: str, top_k: int = 20) -> list[RetrievalResult]:
         if self._backend == "memory":
@@ -110,17 +119,17 @@ class SparseRetriever:
 
     def _search_whoosh(self, query, top_k):
         from whoosh.qparser import QueryParser
-        with self._whoosh_idx.searcher() as searcher:
-            parser = QueryParser("content", self._whoosh_idx.schema)
-            try:
+        try:
+            with self._whoosh_idx.searcher() as searcher:
+                parser = QueryParser("content", self._whoosh_idx.schema)
                 results = searcher.search(parser.parse(query), limit=top_k)
-            except Exception:
-                return []
-            return [
-                RetrievalResult(chunk_id=int(r["id"]), source_file="",
-                                chunk_index=0, content="", score=float(r.score))
-                for r in results
-            ]
+                return [
+                    RetrievalResult(chunk_id=int(r["id"]), source_file="",
+                                    chunk_index=0, content="", score=float(r.score))
+                    for r in results
+                ]
+        except Exception:
+            return []
 
     def _search_sqlite(self, query, top_k):
         try:
