@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +51,7 @@ class FaissStore:
     def _ensure_index(self, dim: int) -> None:
         if self.index is None or self.dimension != dim:
             self.dimension = dim
-            self.index = faiss.IndexFlatIP(dim)
+            self.index = _build_index(self._index_type, dim)
 
     def add_vectors(self, vectors: np.ndarray, metadata: list[dict]) -> None:
         self._add_vectors_sync(vectors, metadata)
@@ -69,8 +70,8 @@ class FaissStore:
         self.index.add(vectors)
 
     async def aadd_vectors(self, vectors: np.ndarray, metadata: list[dict]) -> None:
-        """线程池写入，持排他锁，供入库管道使用。"""
-        async with self._rwlock._write:
+        """线程池写入，写独占，供入库管道使用。"""
+        async with self._rwlock.write():
             await asyncio.to_thread(self._add_vectors_sync, vectors, metadata)
 
     def search(self, query_vector: np.ndarray, top_k: int = 5) -> list[SearchResult]:
@@ -87,15 +88,17 @@ class FaissStore:
             return results
 
     async def asearch(self, query_vector: np.ndarray, top_k: int = 5) -> list[SearchResult]:
-        """线程池执行检索，供并发/阻塞敏感路径调用。"""
+        """线程池执行检索，多读者共享、不被写者打断，供并发/阻塞敏感路径调用。"""
         if self.index is None or self.index.ntotal == 0:
             return []
         if tracer is None or trace is None:
-            return await asyncio.to_thread(self._search_inner, query_vector, top_k)
+            async with self._rwlock.read():
+                return await asyncio.to_thread(self._search_inner, query_vector, top_k)
         with tracer.start_as_current_span("vector.store", kind=trace.SpanKind.CLIENT) as span:
             span.set_attribute("db.system", "faiss")
             start = time.perf_counter()
-            results = await asyncio.to_thread(self._search_inner, query_vector, top_k)
+            async with self._rwlock.read():
+                results = await asyncio.to_thread(self._search_inner, query_vector, top_k)
             span.set_attribute("vector.exec_ms", (time.perf_counter() - start) * 1000)
             span.set_attribute("vector.recall_count", len(results))
             return results
@@ -155,14 +158,33 @@ class FaissStore:
 
 
 class _AsyncRWLock:
-    """读写锁：多读互不阻塞，写与读写互斥。"""
+    """协程读写锁：多读者共享、写独占（写与读互斥，读者互不阻塞）。"""
     def __init__(self):
         self._write = asyncio.Lock()
         self._readers = 0
         self._guard = asyncio.Lock()
 
+    @contextlib.asynccontextmanager
+    async def read(self):
+        async with self._guard:
+            self._readers += 1
+            if self._readers == 1:
+                await self._write.acquire()
+        try:
+            yield
+        finally:
+            async with self._guard:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._write.release()
+
+    @contextlib.asynccontextmanager
+    async def write(self):
+        async with self._write:
+            yield
+
     async def acquire_read(self):
-        pass  # 占位：本任务用 to_thread 直读，写由 add_vectors 独占锁保护
+        return self.read()
 
     async def acquire_write(self):
-        return self._write
+        return self.write()
