@@ -86,7 +86,7 @@ class RAGService:
             query_vector = await self.embedding.encode([retrieval_query])
             if query_vector.size == 0:
                 raise ValueError("Failed to encode question")
-            raw_results = self.faiss.search(query_vector[0], self.top_k)
+            raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
 
         if not raw_results:
             monitor.record_vector_query(True)
@@ -185,7 +185,7 @@ class RAGService:
             if query_vector.size == 0:
                 yield self._sse_event("error", {"message": "Failed to encode question"})
                 return
-            raw_results = self.faiss.search(query_vector[0], self.top_k)
+            raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
 
         if not raw_results:
             logger.warning("No relevant chunks found")

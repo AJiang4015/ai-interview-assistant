@@ -75,7 +75,7 @@ class HybridRetriever:
         query_vector = await self._embedding.encode([query])
         if query_vector.size == 0:
             return []
-        return self._faiss.search(query_vector[0], top_k)
+        return await self._faiss.asearch(query_vector[0], top_k)
 
     def _sparse_search(self, query: str, top_k: int) -> list[RetrievalResult]:
         if self._bm25 is None:
