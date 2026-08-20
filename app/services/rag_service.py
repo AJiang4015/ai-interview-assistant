@@ -10,6 +10,7 @@ from app.services.eval_monitor import EvalMonitor
 from app.services.embedding import EmbeddingService
 from app.services.llm_client import LLMClient
 from app.storage.faiss_store import FaissStore
+from app.services.retrieval_service import HybridRetriever
 from app.storage.session_store import SessionStore
 from app.storage.search_store import SearchStore
 from app.exceptions import IndexNotFoundError
@@ -108,6 +109,7 @@ class RAGService:
         else:
             final_results = raw_results[:self.top_k]
 
+        final_results = self._apply_parent_expansion(final_results)
         unique_results = self._deduplicate_results(final_results)
         context = "\n---\n".join([r.content for r in unique_results])
         prompt = await self._build_prompt(session_id, question, context)
@@ -213,6 +215,7 @@ class RAGService:
         else:
             final_results = raw_results[:self.top_k]
 
+        final_results = self._apply_parent_expansion(final_results)
         unique_results = self._deduplicate_results(final_results)
 
         sources_data = [
@@ -285,6 +288,21 @@ class RAGService:
                 seen_contents.add(r.content)
                 unique_results.append(r)
         return unique_results
+
+    def _apply_parent_expansion(self, results: list) -> list:
+        """enable_parent_expansion 开启时对候选块做 parent 上下文扩展。
+
+        当前 rag_service 尚无 parent 映射来源，故按现有结果构造
+        parent_id=None 的 chunks_by_id，expand_with_parents 因此在无父块
+        时不改变返回（对现有行为零回归），仅就绪接线供后续接入真实映射。
+        """
+        if not settings.enable_parent_expansion:
+            return results
+        chunks_by_id = {
+            r.chunk_id: {"chunk_id": r.chunk_id, "content": r.content, "parent_id": None}
+            for r in results
+        }
+        return HybridRetriever.expand_with_parents(results, chunks_by_id, top_k=len(results) or self.top_k)
 
     async def _get_message_count(self, session_id: str) -> int:
         """获取会话的消息数量，用于缓存 key 计算。"""

@@ -129,6 +129,34 @@ class HybridRetriever:
             results.append(result)
         return results
 
+    @staticmethod
+    def expand_with_parents(candidates, chunks_by_id: dict, top_k: int) -> list[RetrievalResult]:
+        """把候选叶块扩展为含父上下文的块列表。
+
+        chunks_by_id 提供 chunk_id -> {"chunk_id", "content", "parent_id", ...} 的映射；
+        父块 content 并入时以 score*0.9 降权，去重后截断到 top_k。
+        返回统一的 RetrievalResult 列表。
+        """
+        out: list[RetrievalResult] = []
+        seen: set = set()
+        for c in candidates:
+            if c.chunk_id in seen:
+                continue
+            seen.add(c.chunk_id)
+            out.append(c)
+            pid = chunks_by_id.get(c.chunk_id, {}).get("parent_id")
+            if pid is not None and pid not in seen:
+                seen.add(pid)
+                pc = chunks_by_id.get(pid)
+                if pc:
+                    out.append(RetrievalResult(
+                        chunk_id=pid, source_file=c.source_file,
+                        chunk_index=c.chunk_index,
+                        content=pc.get("content", ""),
+                        score=c.score * 0.9,
+                    ))
+        return out[:top_k]
+
     async def retrieve(self, query: str, top_k: int = 20) -> list[RetrievalResult]:
         if not self._enabled:
             dense = await self._dense_search(query, top_k)
