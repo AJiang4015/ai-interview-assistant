@@ -18,11 +18,13 @@ class IndexService:
         doc_store: DocStore,
         embedding: EmbeddingService,
         hybrid_retriever=None,
+        sparse=None,
     ):
         self.faiss = faiss_store
         self.doc_store = doc_store
         self.embedding = embedding
         self.hybrid_retriever = hybrid_retriever  # 可选
+        self.sparse = sparse  # 可选 SparseRetriever；存在则喂给稀疏检索而非 BM25
         self.splitter = MarkdownSplitter(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
@@ -40,21 +42,18 @@ class IndexService:
             )
 
         logger.info(f"Found {len(kb_files)} files, processing...")
-        chunks = []
+        docs = []
         failed_files = []
         for f in kb_files:
             try:
-                file_chunks = self.splitter.split_file(f)
-                if file_chunks:
-                    chunks.extend(file_chunks)
-                else:
-                    logger.warning(f"No chunks produced for file: {f.name}")
-                    failed_files.append(f.name)
+                text = f.read_text(encoding="utf-8")
             except Exception as e:
-                logger.error(f"Failed to process {f.name}: {e}")
+                logger.error(f"Failed to read {f.name}: {e}")
                 failed_files.append(f.name)
+                continue
+            docs.append((f.name, text))
 
-        if not chunks:
+        if not docs:
             logger.warning("No valid chunks produced from any file")
             return BuildIndexResponse(
                 status="warning",
@@ -62,36 +61,28 @@ class IndexService:
                 files_processed=len(kb_files) - len(failed_files)
             )
 
-        logger.info(f"Split into {len(chunks)} chunks from {len(kb_files) - len(failed_files)} files")
+        # 走 IndexPipeline：新 Chunker + 并发 + 幂等 + 进度（内部使用 aadd_vectors 写锁）
+        rep = await self._pipeline().ingest_documents(docs, rebuild=rebuild)
+        chunks = rep.get("chunks") or []
+        if rep["total_chunks"] > 0 and chunks:
+            self.faiss.save(settings.idx_path)
+            if rebuild:
+                self.doc_store.save(chunks)
+            else:
+                self.doc_store.append(chunks)
 
-        contents = [c["content"] for c in chunks]
-        vectors = await self.embedding.encode(contents)
-        logger.info(f"Embedded {len(vectors)} vectors")
+        # 喂给稀疏检索（真实全局 _id），无 sparse 时回退到 BM25
+        self._feed_sparse_or_bm25()
 
-        if rebuild:
-            self.faiss.reset()
-
-        self.faiss.add_vectors(vectors, chunks)
-        self.faiss.save(settings.idx_path)
-        self.doc_store.save(chunks)
-
-        # 同步构建 BM25 索引
-        if self.hybrid_retriever:
-            bm25_docs = []
-            for idx, c in enumerate(chunks):
-                doc = {**c, "_id": idx}
-                bm25_docs.append(doc)
-            self.hybrid_retriever.save_bm25(bm25_docs)
-
-        status_msg = f"Index built: {len(chunks)} chunks from {len(kb_files) - len(failed_files)} files"
+        status_msg = f"Index built: {rep['total_chunks']} chunks from {rep['files_processed']} files"
         if failed_files:
             status_msg += f" (failed: {', '.join(failed_files)})"
         logger.info(status_msg)
 
         return BuildIndexResponse(
-            status="success",
-            total_chunks=len(chunks),
-            files_processed=len(kb_files) - len(failed_files)
+            status="success" if rep["total_chunks"] > 0 else "warning",
+            total_chunks=rep["total_chunks"],
+            files_processed=rep["files_processed"]
         )
 
     def get_status(self) -> IndexStatusResponse:
@@ -105,45 +96,52 @@ class IndexService:
         )
 
     async def add_document(self, file_path) -> BuildIndexResponse:
-        """增量索引单个文件：拆分→嵌入→追加到已有索引，不全量重建。
-
-        适用于上传新文档时，避免全量重建造成的向量重复与耗时。
-        """
+        """增量索引单个文件：走 IndexPipeline（新 Chunker + 并发 + 幂等），
+        追加到已有索引，不全量重建（内部 aadd_vectors 写锁）。"""
         file_path = Path(file_path)
         if not file_path.exists():
             logger.warning(f"add_document: file not found {file_path}")
             return BuildIndexResponse(status="error", total_chunks=0, files_processed=0)
 
         try:
-            chunks = self.splitter.split_file(file_path)
+            text = file_path.read_text(encoding="utf-8")
         except Exception as e:
-            logger.error(f"Failed to split file {file_path.name}: {e}")
+            logger.error(f"Failed to read file {file_path.name}: {e}")
             return BuildIndexResponse(status="error", total_chunks=0, files_processed=0)
 
-        if not chunks:
-            logger.warning(f"No chunks produced for file: {file_path.name}")
-            return BuildIndexResponse(status="warning", total_chunks=0, files_processed=0)
+        rep = await self._pipeline().ingest_documents([(file_path.name, text)], rebuild=False)
+        chunks = rep.get("chunks") or []
+        if rep["total_chunks"] > 0 and chunks:
+            self.faiss.save(settings.idx_path)
+            self.doc_store.append(chunks)
 
-        contents = [c["content"] for c in chunks]
-        vectors = await self.embedding.encode(contents)
-        logger.info(f"add_document: embedded {len(vectors)} vectors for {file_path.name}")
+        self._feed_sparse_or_bm25()
 
-        self.faiss.add_vectors(vectors, chunks)
-        self.faiss.save(settings.idx_path)
-        self.doc_store.append(chunks)
+        logger.info(f"add_document: indexed {rep['total_chunks']} chunks from {file_path.name}")
+        return BuildIndexResponse(
+            status="success" if rep["total_chunks"] > 0 else "warning",
+            total_chunks=rep["total_chunks"],
+            files_processed=rep["files_processed"],
+        )
 
-        # 基于 faiss 全量元数据重建 BM25（BM25 需整体重建）
-        if self.hybrid_retriever:
-            all_meta = self.faiss.get_all_metadata()
+    def _feed_sparse_or_bm25(self):
+        """将当前 faiss 全量元数据喂给稀疏检索（真实全局 _id）；
+        无 sparse 时回退到 BM25，保持向后兼容。"""
+        all_meta = self.faiss.get_all_metadata()
+        if self.sparse is not None:
+            self.sparse.add_documents([
+                {"_id": m.get("_id", i), "content": m.get("content", ""),
+                 "source_file": m.get("source_file", ""), "chunk_index": m.get("chunk_index", 0)}
+                for i, m in enumerate(all_meta)
+            ])
+        elif self.hybrid_retriever:
             bm25_docs = [{"_id": m.get("_id", i), **m} for i, m in enumerate(all_meta)]
             self.hybrid_retriever.save_bm25(bm25_docs)
 
-        logger.info(f"add_document: indexed {len(chunks)} chunks from {file_path.name}")
-        return BuildIndexResponse(
-            status="success",
-            total_chunks=len(chunks),
-            files_processed=1,
-        )
+    @staticmethod
+    def _public_rep(rep: dict) -> dict:
+        """剥离 chunks 等原始全文字段，避免公开返回泄漏文档内容。"""
+        return {k: v for k, v in rep.items() if k != "chunks"}
 
     def _pipeline(self):
         from app.services.index_pipeline import IndexPipeline
@@ -173,7 +171,7 @@ class IndexService:
         if rep["total_chunks"] > 0 and chunks:
             self.faiss.save(settings.idx_path)
             self.doc_store.save(chunks)
-        return rep
+        return self._public_rep(rep)
 
     async def add_document_pipeline(self, file_path) -> dict:
         """增量入库单个文件：走 IndexPipeline，追加 doc_store 与向量。"""
@@ -205,4 +203,4 @@ class IndexService:
         if rep["total_chunks"] > 0 and chunks:
             self.faiss.save(settings.idx_path)
             self.doc_store.append(chunks)
-        return rep
+        return self._public_rep(rep)

@@ -30,11 +30,13 @@ class HybridRetriever:
         embedding: EmbeddingService,
         bm25_index_path: str = "data/bm25_index.pkl",
         enabled: bool = True,
+        sparse=None,
     ):
         self._faiss = faiss_store
         self._embedding = embedding
         self._bm25_path = Path(bm25_index_path)
         self._enabled = enabled
+        self._sparse = sparse  # 可选 SparseRetriever；存在则优先走稀疏腿
         self._bm25: BM25Okapi | None = None
         self._bm25_docs: list[dict] = []
 
@@ -78,6 +80,13 @@ class HybridRetriever:
         return await self._faiss.asearch(query_vector[0], top_k)
 
     def _sparse_search(self, query: str, top_k: int) -> list[RetrievalResult]:
+        if self._sparse is not None:
+            try:
+                results = self._sparse.search(query, top_k)
+            except Exception as e:
+                logger.warning("SparseRetriever search failed, degraded: %s", e)
+                results = []
+            return [self._backfill_sparse(r) for r in results]
         if self._bm25 is None:
             return []
         tokenized = self._tokenize(query)
@@ -96,6 +105,23 @@ class HybridRetriever:
                 score=float(scores[idx]),
             ))
         return results
+
+    def _backfill_sparse(self, r: RetrievalResult) -> RetrievalResult:
+        """SparseRetriever 的 whoosh/sqlite 后端可能缺 content/source_file，
+        从其内部 _docs 回填，保证与 RRF/下游检索兼容；无匹配则保持空。"""
+        if r.content or r.source_file:
+            return r
+        docs = getattr(self._sparse, "_docs", None) or []
+        for d in docs:
+            if d.get("_id") == r.chunk_id:
+                return RetrievalResult(
+                    chunk_id=r.chunk_id,
+                    source_file=d.get("source_file", ""),
+                    chunk_index=d.get("chunk_index", r.chunk_index),
+                    content=d.get("content", ""),
+                    score=r.score,
+                )
+        return r
 
     def _rrf_merge(
         self, dense_results: list, sparse_results: list, top_k: int

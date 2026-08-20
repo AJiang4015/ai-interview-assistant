@@ -32,6 +32,7 @@ from app.utils.logger import get_logger
 from app.services.query_rewrite import QueryRewriteService
 from app.services.rerank_service import RerankService
 from app.services.retrieval_service import HybridRetriever
+from app.services.sparse_retriever import SparseRetriever
 from app.services.cache_service import ResponseCache
 from app.api.evaluation import router as evaluation_router
 from app.services.evaluation_service import EvaluationService
@@ -111,12 +112,33 @@ async def lifespan(app: FastAPI):
         enabled=settings.enable_query_rewrite,
     )
 
-    # 混合检索 + BM25
+    # 加载既有向量索引
+    idx_path = Path(settings.idx_path)
+    if (idx_path / "index.faiss").exists():
+        faiss_store.load(settings.idx_path)
+        logger.info(f"Loaded existing index with {faiss_store.size} vectors")
+    else:
+        logger.info("No existing index found, index is empty")
+
+    # 稀疏检索：基于向量元数据在线重建（memory 后端亦可在内存可用）
+    sparse_retriever = SparseRetriever(backend=settings.sparse_backend)
+    if faiss_store.is_loaded():
+        _meta = faiss_store.get_all_metadata()
+        if _meta:
+            sparse_retriever.add_documents([
+                {"_id": m.get("_id", i), "content": m.get("content", ""),
+                 "source_file": m.get("source_file", ""), "chunk_index": m.get("chunk_index", 0)}
+                for i, m in enumerate(_meta)
+            ])
+            logger.info(f"Sparse index rebuilt from {len(_meta)} chunks")
+
+    # 混合检索 + 稀疏（SparseRetriever），BM25 作为降级
     hybrid_retriever = HybridRetriever(
         faiss_store=faiss_store,
         embedding=embedding_service,
         bm25_index_path=settings.bm25_index_path,
         enabled=settings.enable_hybrid_search,
+        sparse=sparse_retriever,
     )
     hybrid_retriever.load_bm25()
 
@@ -145,7 +167,8 @@ async def lifespan(app: FastAPI):
         ttl=settings.cache_ttl,
     )
 
-    index_service = IndexService(faiss_store, doc_store, embedding_service, hybrid_retriever=hybrid_retriever)
+    index_service = IndexService(faiss_store, doc_store, embedding_service,
+                                 hybrid_retriever=hybrid_retriever, sparse=sparse_retriever)
     rag_service = RAGService(
         faiss_store, embedding_service, llm_client,
         session_store=session_store,
@@ -170,13 +193,6 @@ async def lifespan(app: FastAPI):
 
     global deep_dive_service
     deep_dive_service = DeepDiveService(store=DeepDiveStore(), llm=llm_client)
-
-    idx_path = Path(settings.idx_path)
-    if (idx_path / "index.faiss").exists():
-        faiss_store.load(settings.idx_path)
-        logger.info(f"Loaded existing index with {faiss_store.size} vectors")
-    else:
-        logger.info("No existing index found, index is empty")
 
     if session_store.is_connected:
         logger.info("Redis session store connected successfully")
