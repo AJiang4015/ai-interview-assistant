@@ -54,19 +54,22 @@ class IndexPipeline:
     async def _ingest_one(self, name: str, text: str, all_chunks: list[dict],
                           progress: _IngestProgress) -> list[dict]:
         async with self.sem:
-            chunks = self.chunker.split_text(text, source_file=name)
             try:
+                chunks = self.chunker.split_text(text, source_file=name)
                 contents = [c["content"] for c in chunks]
                 vectors = await self.embedding.encode(contents)
                 await self.store.aadd_vectors(vectors, chunks)
             except Exception as e:
-                logger.error("embed/add failed for %s: %s", name, e)
+                logger.error("ingest failed for %s: %s", name, e)
                 progress.failed.append(name)
                 return []
             all_chunks.extend(chunks)
             progress.processed += 1
             self._state[self._doc_hash(text)] = "done"
-            self._save_state()
+            try:
+                self._save_state()
+            except Exception as e:
+                logger.error("save_state failed for %s: %s", name, e)
             return chunks
 
     async def ingest_documents(self, documents: list[tuple[str, str]],

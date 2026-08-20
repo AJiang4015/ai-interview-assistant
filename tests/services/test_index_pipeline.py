@@ -59,3 +59,67 @@ def test_ingest_idempotent_skips_done_doc():
     assert second["files_processed"] == 0, "已 done 的文档第二次应被幂等跳过"
     assert second["total_chunks"] == 0
     assert second["progress"]["total"] == 0
+
+
+def test_failure_of_one_doc_is_isolated():
+    """单个文档 embed 抛异常不应中断其它文档，且整体不抛异常。"""
+    chunker = type("C", (), {"split_text": lambda self, t, source_file: [
+        {"content": t, "source_file": source_file, "chunk_index": 0,
+         "headings": [], "parent_id": None, "content_hash": "h"}]})()
+    embed_calls = {"n": 0}
+
+    async def encode(self, contents):
+        embed_calls["n"] += 1
+        if embed_calls["n"] == 1:
+            raise RuntimeError("boom on first doc")
+        return [[0.1] * 8]
+    embedding = type("E", (), {"encode": encode})()
+    store = type("V", (), {
+        "size": 0,
+        "aadd_vectors": AsyncMock(),
+        "save": lambda self, *a, **k: None,
+        "is_loaded": lambda: False})()
+    p = IndexPipeline(chunker=chunker, embedding=embedding,
+                      vector_store=store, sparse=None,
+                      state_path=":memory:", concurrent_batches=2)
+
+    async def go():
+        return await p.ingest_documents(
+            [("bad.md", "会失败的文档"), ("ok.md", "正常文档")], rebuild=True)
+
+    rep = asyncio.run(go())
+    assert rep["status"] == "partial"
+    assert rep["failed_docs"] == ["bad.md"]
+    assert rep["files_processed"] == 1
+    assert rep["total_chunks"] == 1, "total_chunks 只含成功文档的块"
+    assert rep["progress"]["processed"] == 1
+    assert rep["progress"]["total"] == 2
+
+
+def test_split_text_failure_is_isolated():
+    """split_text 抛异常同样应隔离，不中断整体。"""
+    def split_text(self, t, source_file):
+        if "坏" in t:
+            raise RuntimeError("split fail")
+        return [{"content": t, "source_file": source_file, "chunk_index": 0,
+                 "headings": [], "parent_id": None, "content_hash": "h"}]
+    chunker = type("C", (), {"split_text": split_text})()
+    embedding = type("E", (), {"encode": AsyncMock(return_value=[[0.1] * 8])})()
+    store = type("V", (), {
+        "size": 0,
+        "aadd_vectors": AsyncMock(),
+        "save": lambda self, *a, **k: None,
+        "is_loaded": lambda: False})()
+    p = IndexPipeline(chunker=chunker, embedding=embedding,
+                      vector_store=store, sparse=None,
+                      state_path=":memory:", concurrent_batches=2)
+
+    async def go():
+        return await p.ingest_documents(
+            [("bad.md", "坏文档"), ("ok.md", "正常文档")], rebuild=True)
+
+    rep = asyncio.run(go())
+    assert rep["status"] == "partial"
+    assert rep["failed_docs"] == ["bad.md"]
+    assert rep["files_processed"] == 1
+    assert rep["total_chunks"] == 1
