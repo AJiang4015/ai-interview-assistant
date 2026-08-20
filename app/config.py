@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     top_k: int = 5
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    chunk_min_size: int = 100
+
+    # ===== 大规模 RAG 检索配置 =====
+    vector_index_type: str = "hnsw"      # flat | hnsw | ivf
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 200
+    hnsw_ef_search: int = 64
+    ivf_nlist: int = 200
+    sparse_backend: str = "auto"          # memory | whoosh | sqlite_fts | auto
+    concurrent_batches: int = 4
+    enable_parent_expansion: bool = True
+    ingest_state_path: str = "data/ingest_state.json"
     llm_temperature: float = 0.7
     request_timeout: int = 30
 
