@@ -1,3 +1,8 @@
+"""IndexPipeline：并发 + 幂等（doc_hash 跳过 done）入库管道。
+
+单进程约束：state 与 faiss/index 落盘假定单 worker，多 worker 部署需自行加
+进程级文件锁或换外部存储。
+"""
 import asyncio
 import hashlib
 import json

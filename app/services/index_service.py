@@ -61,15 +61,27 @@ class IndexService:
                 files_processed=len(kb_files) - len(failed_files)
             )
 
+        # I-1 兜底：索引文件被清但 ingest_state 尚存（陈旧 done）时，非 rebuild 会
+        # 遇到全部 done → pending=0 → 永不重建。故 faiss 未加载/为空时强制按 rebuild
+        # 处理以覆盖陈旧 state。保持正常重复 build（faiss 已加载）时幂等跳过不重复嵌入。
+        if not rebuild and not self.faiss.is_loaded():
+            rebuild = True
+
         # 走 IndexPipeline：新 Chunker + 并发 + 幂等 + 进度（内部使用 aadd_vectors 写锁）
         rep = await self._pipeline().ingest_documents(docs, rebuild=rebuild)
         chunks = rep.get("chunks") or []
         if rep["total_chunks"] > 0 and chunks:
-            self.faiss.save(settings.idx_path)
-            if rebuild:
-                self.doc_store.save(chunks)
-            else:
-                self.doc_store.append(chunks)
+            try:
+                self.faiss.save(settings.idx_path)
+                if rebuild:
+                    self.doc_store.save(chunks)
+                else:
+                    self.doc_store.append(chunks)
+            except Exception as e:
+                # I-2：落盘失败不得吞掉。管道内向量已写入并标记 done，此刻 state 已 done
+                # 但 faiss/doc_store 未落盘 —— 由 I-1（faiss 未加载强制 rebuild）兜底恢复。
+                logger.error(f"build_index: index/doc_store persist failed: {e}")
+                raise
 
         # 喂给稀疏检索（真实全局 _id），无 sparse 时回退到 BM25
         self._feed_sparse_or_bm25()
@@ -112,8 +124,13 @@ class IndexService:
         rep = await self._pipeline().ingest_documents([(file_path.name, text)], rebuild=False)
         chunks = rep.get("chunks") or []
         if rep["total_chunks"] > 0 and chunks:
-            self.faiss.save(settings.idx_path)
-            self.doc_store.append(chunks)
+            try:
+                self.faiss.save(settings.idx_path)
+                self.doc_store.append(chunks)
+            except Exception as e:
+                # I-2：落盘失败不得吞掉；state 已 done 未落盘由 I-1 兜底恢复。
+                logger.error(f"add_document: index/doc_store persist failed: {e}")
+                raise
 
         self._feed_sparse_or_bm25()
 

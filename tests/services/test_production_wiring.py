@@ -139,3 +139,25 @@ def test_build_index_feeds_sparse_when_provided(monkeypatch):
     assert sparse.add_documents.called
     fed = sparse.add_documents.call_args.args[0]
     assert fed, "sparse 应收到基于 faiss 元数据的文档"
+
+
+# ---------- I-1：faiss 未加载 + rebuild=False 时强制按 rebuild 语义重建 ----------
+
+def test_build_index_forces_rebuild_when_faiss_not_loaded(monkeypatch):
+    """索引文件被清但 ingest_state 尚存（陈旧 done）时，传入 rebuild=False
+    也应强制按 rebuild 语义执行（重置索引 + 重新嵌入），覆盖 pending=0 永不重建。
+    """
+    svc, faiss, _ = _make_index_service_with_faiss()
+    faiss.is_loaded.return_value = False
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "kb.md"
+        p.write_text(_long_text(), encoding="utf-8")
+        svc.splitter.scan_md_files = lambda _: [p]
+        monkeypatch.setattr(settings, "ingest_state_path", str(Path(d) / "state.json"))
+
+        resp = asyncio.run(svc.build_index(rebuild=False))
+
+    # rebuild 语义：先重置索引再重新嵌入（use 真实 pipeline 的 reset 分支）
+    assert faiss.reset.called
+    assert faiss.aadd_vectors.called
+    assert resp.total_chunks >= 1

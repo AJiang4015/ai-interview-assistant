@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     siliconflow_api_key: str
     siliconflow_model: str = "Qwen/Qwen3-Embedding-4B"
     knowledge_base_dir: str = "data/knowledge_base"
+    # 单进程约束：state 与 faiss/index 落盘假定单 worker，多 worker 部署需自行加进程级文件锁或换外部存储
     index_path: str = "data/faiss_index"
     top_k: int = 5
     chunk_size: int = 1000
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     sparse_backend: str = "auto"          # memory | whoosh | sqlite_fts | auto
     concurrent_batches: int = 4
     enable_parent_expansion: bool = True
+    # 单进程约束：state 与 faiss/index 落盘假定单 worker，多 worker 部署需自行加进程级文件锁或换外部存储
     ingest_state_path: str = "data/ingest_state.json"
     llm_temperature: float = 0.7
     request_timeout: int = 30
