@@ -86,8 +86,16 @@ class EvaluationService:
 
     async def run_async(self, job_id: str, configs: list[dict] | None = None):
         """后台执行评测，结果写入 job。"""
+        def _progress(current_config, total_configs, current_item, total_items, stage):
+            self._jobs[job_id]["progress"] = {
+                "current_config": current_config,
+                "total_configs": total_configs,
+                "current_item": current_item,
+                "total_items": total_items,
+                "stage": stage,
+            }
         try:
-            result = await self.run(configs)
+            result = await self.run(configs, progress_cb=_progress)
             self._jobs[job_id] = {"status": "done", "result": result, "error": None}
         except Exception as e:
             self._jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
@@ -139,7 +147,7 @@ class EvaluationService:
     def _context_text(chunks: list[dict]) -> str:
         return "\n---\n".join(c["content"] for c in chunks)
 
-    async def run(self, configs: list[dict] | None = None) -> dict:
+    async def run(self, configs: list[dict] | None = None, progress_cb=None) -> dict:
         testset = self._load_testset()
         if not testset:
             return {"error": "测试集为空，请先生成测试集"}
@@ -149,12 +157,14 @@ class EvaluationService:
             {"name": "no_rerank", "use_hybrid": True, "use_rerank": False},
         ]
         configs = configs or default_cfgs
+        total_items = len(testset) * len(configs)
+        processed = 0
         report = {
             "timestamp": time.strftime("%Y%m%d_%H%M%S"),
             "configs": [],
             "total_questions": len(testset),
         }
-        for cfg in configs:
+        for cfg_index, cfg in enumerate(configs, start=1):
             retrieval_metrics = []
             gen_f = gen_r = gen_c = 0.0
             gen_n = 0
@@ -173,6 +183,9 @@ class EvaluationService:
                 gen_r += await self._judge(ANSWER_RELEVANCE_PROMPT.format(question=item["question"], answer=answer))
                 gen_c += await self._judge(CONTEXT_RELEVANCE_PROMPT.format(question=item["question"], context=context))
                 gen_n += 1
+                processed += 1
+                if progress_cb:
+                    progress_cb(cfg_index, len(configs), processed, total_items, cfg["name"])
             report["configs"].append({
                 "name": cfg["name"],
                 "retrieval": _aggregate_retrieval(retrieval_metrics),
