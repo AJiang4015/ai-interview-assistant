@@ -36,7 +36,8 @@ class InterviewStore:
                     total_score    REAL DEFAULT 0,
                     started_at     TEXT,
                     completed_at   TEXT,
-                    report         TEXT
+                    report         TEXT,
+                    username       TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE TABLE IF NOT EXISTS interview_questions (
@@ -64,11 +65,26 @@ class InterviewStore:
                 ("jd_text", "TEXT DEFAULT ''"),
                 ("jd_analysis", "TEXT DEFAULT '{}'"),
                 ("match_analysis", "TEXT DEFAULT '{}'"),
+                ("username", "TEXT NOT NULL DEFAULT ''"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE interview_sessions ADD COLUMN {col} {col_type}")
                 except sqlite3.OperationalError:
                     pass  # Column already exists
+
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_is_user ON interview_sessions(username)"
+            )
+
+            # 存量数据认领：把旧场次归属到配置的 LEGACY_DATA_OWNER（空则不认领，
+            # 旧数据保持 username=''，对任何登录用户均判为无权访问）
+            from app.config import settings
+            legacy_owner = settings.legacy_data_owner.strip()
+            if legacy_owner:
+                conn.execute(
+                    "UPDATE interview_sessions SET username = ? WHERE username = ''",
+                    (legacy_owner,),
+                )
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -76,6 +92,7 @@ class InterviewStore:
         return conn
 
     def create_session(self, position: str,
+                       username: str = '',
                        resume_text: str = '',
                        resume_analysis: str = '{}',
                        jd_text: str = '',
@@ -87,11 +104,11 @@ class InterviewStore:
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO interview_sessions
-                   (id, position, status, started_at, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis)
-                   VALUES (?, ?, 'in_progress', ?, ?, ?, ?, ?, ?)""",
-                (session_id, position, now, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis),
+                   (id, position, status, started_at, username, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis)
+                   VALUES (?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?)""",
+                (session_id, position, now, username, resume_text, resume_analysis, jd_text, jd_analysis, match_analysis),
             )
-        logger.info(f"Interview session created: {session_id} for {position}")
+        logger.info(f"Interview session created: {session_id} for {position} by {username}")
         return {"id": session_id, "position": position, "status": "in_progress", "started_at": now}
 
     def add_question(self, session_id: str, round_num: int, question: str,
@@ -228,15 +245,38 @@ class InterviewStore:
                 return d
         return None
 
-    def list_sessions(self, limit: int = 20) -> list[dict]:
-        """List recent interview sessions."""
+    def list_sessions(self, limit: int = 20, username: str | None = None) -> list[dict]:
+        """List recent interview sessions.
+
+        When ``username`` is provided, only sessions owned by that username are
+        returned. A value of ``''`` (empty, e.g. unclaimed legacy data) is never
+        returned unless explicitly queried, so it is excluded from per-user views.
+        """
+        query = (
+            """SELECT id, position, status, total_rounds, total_score, started_at, completed_at
+               FROM interview_sessions"""
+        )
+        params: tuple = ()
+        if username is not None:
+            query += " WHERE username = ?"
+            params = (username,)
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params = params + (limit,)
         with self._get_conn() as conn:
-            rows = conn.execute(
-                """SELECT id, position, status, total_rounds, total_score, started_at, completed_at
-                   FROM interview_sessions ORDER BY started_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
+
+    def owns_session(self, session_id: str, username: str) -> bool:
+        """Check whether ``username`` owns the given session (used for authorization)."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT username FROM interview_sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return False
+        owner = row["username"]
+        # 空归属（未认领存量数据）不属任何用户，禁止任何登录用户访问
+        return bool(owner) and owner == username
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and its questions."""

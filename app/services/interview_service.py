@@ -18,6 +18,8 @@ from app.services.embedding import EmbeddingService
 from app.storage.interview_store import InterviewStore
 from app.services.topic_tracker import TopicTracker
 from app.utils.logger import get_logger
+from app.config import settings
+from app.exceptions import AuthorizationError
 
 logger = get_logger(__name__)
 
@@ -71,7 +73,9 @@ EVALUATE_PROMPT = """请对面试者的回答进行评价。
 请按以下 JSON 格式评价（不要包含其他内容）：
 {{
     "score": <1-10 的整数>,
-    "comment": "评价内容（指出优点和不足，约 50-100 字）",
+    "comment": "一句话评价摘要（优点和不足各一句，约 30-50 字）",
+    "score_reason": "评分原因：按条目列出「答对的部分」与「遗漏或错误的部分」，约 100-200 字",
+    "reference_answer": "该题的参考答案要点：结构化列出标准回答应覆盖的关键点，约 150-300 字",
     "tags": ["涉及知识点1", "涉及知识点2"],
     "next_difficulty": "easy/medium/hard",
     "should_end": false
@@ -96,7 +100,7 @@ REPORT_PROMPT = """请根据以下面试记录生成面试报告。
 请按以下 JSON 格式输出（不要包含其他内容）：
 {{
     "score_breakdown": [
-        {{"round": 1, "question": "题目概要", "score": 7, "tags": ["知识点1"]}}
+        {{"round": 1, "question": "完整题目", "score": 7, "tags": ["知识点1"], "comment": "一句话摘要", "score_reason": "评分原因", "reference_answer": "参考答案"}}
     ],
     "total_score": <1-10 的浮点数>,
     "knowledge_analysis": {{
@@ -171,12 +175,13 @@ class InterviewService:
     async def start(
         self,
         position: str,
+        username: str = "",
         resume_file: Optional[UploadFile] = None,
         jd_text: Optional[str] = None,
     ) -> dict:
         """Start a new interview session, optionally with resume+JD analysis."""
         # Create session with empty analysis first
-        session = self.store.create_session(position)
+        session = self.store.create_session(position, username=username)
 
         # Parse resume and JD if provided
         resume_analysis = {}
@@ -230,7 +235,15 @@ class InterviewService:
             "question": question_data,
         }
 
-    async def answer(self, question_id: str, answer: str, generate_next: bool = True) -> dict:
+    def _authorize(self, session_id: str, username: str | None) -> None:
+        """校验登录用户是否拥有该面试场次；不拥有则抛 AuthorizationError(403)。"""
+        if username is None:
+            return
+        if not self.store.owns_session(session_id, username):
+            raise AuthorizationError("无权访问该面试场次")
+
+    async def answer(self, question_id: str, answer: str, generate_next: bool = True,
+                     username: str | None = None) -> dict:
         """Submit an answer, get evaluation and optionally next question.
 
         Args:
@@ -255,6 +268,9 @@ class InterviewService:
         if not session:
             raise ValueError(f"Session not found: {session_id}")
 
+        # 用户隔离：校验当前登录用户拥有该场次
+        self._authorize(session_id, username)
+
         # Evaluate the answer
         kb_context = await self._retrieve_context(question["question"] + " " + answer)
         eval_prompt = EVALUATE_PROMPT.format(
@@ -268,10 +284,17 @@ class InterviewService:
         evaluation = _parse_json(eval_text) or {
             "score": 5,
             "comment": "评价解析失败，请参考面试报告。",
+            "score_reason": "",
+            "reference_answer": "",
             "tags": ["未知"],
             "next_difficulty": "medium",
             "should_end": False,
         }
+        # 容错：LLM 输出缺少新字段时补空，避免前端渲染异常
+        if not isinstance(evaluation, dict):
+            evaluation = {"score": 5, "comment": "", "score_reason": "", "reference_answer": "", "tags": [], "next_difficulty": "medium", "should_end": False}
+        evaluation.setdefault("score_reason", "")
+        evaluation.setdefault("reference_answer", "")
 
         score = evaluation.get("score", 5)
         self.store.update_answer(question_id, answer, evaluation, score)
@@ -334,38 +357,57 @@ class InterviewService:
         )
         return self.planner.decide(ctx)
 
-    async def end(self, session_id: str) -> dict:
+    async def end(self, session_id: str, username: str | None = None) -> dict:
         """Force-end an interview and generate report."""
         session = self.store.get_session(session_id)
         if not session:
             raise ValueError(f"Session not found: {session_id}")
+        self._authorize(session_id, username)
         report = await self._generate_report(session_id)
         self.store.complete_session(session_id, report)
         return {"session_id": session_id, "report": report}
 
-    async def get_report(self, session_id: str) -> Optional[dict]:
-        """Get interview report."""
+    async def get_report(self, session_id: str, username: str | None = None) -> Optional[dict]:
+        """Get interview report (read-only).
+
+        仅返回已生成并落库的报告；不存在或会话未完成时返回 None，
+        绝不在此处触发 LLM 生成，避免"查看"产生写副作用。
+        """
         session = self.store.get_session(session_id)
         if not session:
             return None
-        if session.get("report"):
-            return session["report"]
-        # Generate report if not yet generated
-        report = await self._generate_report(session_id)
-        self.store.complete_session(session_id, report)
-        return report
+        self._authorize(session_id, username)
+        return session.get("report")
 
-    def history(self) -> list[dict]:
-        """List recent interview sessions."""
-        return self.store.list_sessions()
+    def get_detail(self, session_id: str, username: str | None = None) -> Optional[dict]:
+        """获取面试详情（纯读取）：会话元信息 + 逐题问答。
 
-    def stats(self) -> dict:
-        """跨场次知识点画像：聚合所有已完成面试中各 topic/category 的得分。
+        不触发任何 LLM 调用、不改变会话状态。空归属（username=''）的记录
+        与既有用户隔离逻辑一致，通过 _authorize 判定权限。
+        """
+        session = self.store.get_session(session_id)
+        if not session:
+            return None
+        self._authorize(session_id, username)
+        meta = {k: session.get(k) for k in (
+            "id", "position", "status", "total_rounds", "total_score",
+            "started_at", "completed_at",
+        )}
+        questions = self.store.get_questions(session_id)
+        return {"session": meta, "questions": questions}
+
+    def history(self, username: str | None = None, limit: int = 20) -> list[dict]:
+        """List recent interview sessions (scoped to a user when provided)."""
+        return self.store.list_sessions(limit=limit, username=username)
+
+    def stats(self, username: str | None = None) -> dict:
+        """跨场次知识点画像：聚合某用户所有已完成面试中各 topic/category 的得分。
 
         返回每个分类的题目数、平均分、薄弱子标题，用于复习页的"薄弱点画像"。
+        按 username 过滤数据源，实现用户复习画像隔离。
         """
         try:
-            sessions = self.store.list_sessions(limit=100)
+            sessions = self.store.list_sessions(limit=100, username=username)
         except Exception as e:
             logger.warning(f"Failed to list sessions for stats: {e}")
             sessions = []
@@ -420,12 +462,19 @@ class InterviewService:
         categories.sort(key=lambda c: (c["avg_score"], -c["total_questions"]))
         return {"categories": categories, "total_questions": sum(c["total_questions"] for c in categories)}
 
-    async def today(self, position: str = "Java后端") -> dict:
-        """今日一题：从历史薄弱分类中选一个 topic，调用 LLM 生成一道复习题。
+    async def today(self, username: str | None = None, position: str | None = None) -> dict:
+        """今日一题：从某用户历史薄弱分类中选一个 topic，调用 LLM 生成一道复习题。
 
         若无历史数据，则按默认岗位随机出一题。该题独立于面试流程，不落库。
+        岗位优先级：显式 position > 该用户最近一场面试的岗位 > 全局默认岗位。
         """
-        stats = self.stats()
+        # 解析岗位来源
+        if not position:
+            latest = self.store.list_sessions(limit=1, username=username)
+            position = (latest[0].get("position") if latest and latest[0].get("position") else None) \
+                or settings.default_interview_position
+
+        stats = self.stats(username)
         weak_topics = []
         for cat in stats.get("categories", []):
             for t in cat.get("weak_topics", []):
@@ -623,14 +672,17 @@ class InterviewService:
         for q in questions:
             score = q.get("score", 0) or 0
             total_score += score
-            tags = []
-            if q.get("evaluation"):
-                tags = q["evaluation"].get("tags", [])
+            eval_data = q.get("evaluation") or {}
+            tags = eval_data.get("tags", [])
             q_details.append({
                 "round": q["round"],
-                "question": q["question"][:80],
+                # 报告携带完整题目，不再截断，保证可独立复盘
+                "question": q["question"],
                 "score": score,
                 "tags": tags,
+                "comment": eval_data.get("comment", ""),
+                "score_reason": eval_data.get("score_reason", ""),
+                "reference_answer": eval_data.get("reference_answer", ""),
                 "topic": q.get("topic", "") or "",
                 "category": q.get("category", "") or "",
             })
@@ -676,6 +728,26 @@ class InterviewService:
         if parsed:
             parsed["total_score"] = avg_score
             parsed["topic_analysis"] = topic_analysis
+
+            # 用本地真实数据校正 score_breakdown：保证完整题目、真实评分原因与参考答案，
+            # 避免 LLM 截断题目或遗漏新字段
+            detail_by_round = {d["round"]: d for d in q_details}
+            llm_breakdown = parsed.get("score_breakdown") or []
+            corrected = []
+            for item in llm_breakdown:
+                local = detail_by_round.get(item.get("round"))
+                merged = dict(item)
+                if local:
+                    for key in ("question", "score", "tags", "comment", "score_reason", "reference_answer", "topic", "category"):
+                        if local.get(key):
+                            merged[key] = local[key]
+                corrected.append(merged)
+            # 补充 LLM 遗漏的题目
+            seen_rounds = {item.get("round") for item in corrected if item.get("round")}
+            for d in q_details:
+                if d["round"] not in seen_rounds:
+                    corrected.append(d)
+            parsed["score_breakdown"] = corrected
 
             # Generate recommended_study from topic_analysis
             recommended = []
