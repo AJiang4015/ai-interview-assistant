@@ -112,3 +112,14 @@ data/eval_testset.json
 data/eval_reports/
 # Interview database (user data)
 data/interviews.db
+# Backup snapshots (see scripts/backup_data.sh)
+backups/
+
+# Runtime artifacts (rebuildable via API, not versioned)
+data/search.db
+data/bm25_index.pkl
+data/bm25_index.pkl.fts.sqlite
+data/ingest_state.json
+
+# Local tooling (agent/ssh helper scripts)
+.tools/

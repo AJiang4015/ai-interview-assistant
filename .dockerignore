@@ -1,0 +1,28 @@
+# Docker 构建上下文排除项
+# 不进入镜像：git / 虚拟环境 / 测试 / 变更目录 / IDE
+.git
+.gitignore
+.superpowers/
+.vscode/
+.idea/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+tests/
+docs/
+tools/
+.tools/
+*.md
+AGENTS.md
+PROBLEM.md
+
+# data 由 compose volume 挂载，不固化进镜像
+data/
+
+# 敏感配置通过 compose env_file 注入，不打进镜像
+.env
+.env.*
+Thumbs.db
+.DS_Store
