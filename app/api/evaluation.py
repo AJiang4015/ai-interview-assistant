@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
+from app.api.auth import get_current_user
 from app.api.schemas import BaseModel
 
 
@@ -11,7 +12,7 @@ class RunEvalRequest(BaseModel):
     configs: list[dict] | None = None
 
 
-router = APIRouter(prefix="/api/eval")
+router = APIRouter(prefix="/api/eval", dependencies=[Depends(get_current_user)])
 
 
 def _get_eval_service():

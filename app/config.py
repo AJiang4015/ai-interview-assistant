@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     redis_password: str = ""
     session_ttl: int = 3600
     max_history_turns: int = 20
+    # 长期记忆持久化：开启时会话历史自 Redis 过期后可从 SQLite 恢复（按用户隔离）；关闭则只走 Redis
+    enable_history_persistence: bool = True
 
 # RAG pipeline 配置
     rerank_top_k: int = 5
@@ -56,6 +58,21 @@ class Settings(BaseSettings):
     faithfulness_threshold: float = 0.6
     session_token_budget: float = 1.0
     token_price: dict = {"qwen3.7-max": {"input": 1.2, "output": 4.0}}
+
+    # ===== 面试/复习画像 =====
+    # 今日一题在用户无历史数据、也无此前面试岗位记录时回退的全局默认岗位
+    default_interview_position: str = "Java后端"
+    # 存量旧面试数据的归属账号：启动时把 username='' 的场次认领到该账号；
+    # 留空表示旧数据不被任何用户认领（对任何登录用户访问均返回 403）
+    legacy_data_owner: str = ""
+
+    # ===== 认证与跨域 =====
+    # JWT 签名密钥：生产必须通过 .env 提供（JWT_SECRET），缺失则拒绝启动，避免可预测的默认值
+    jwt_secret: str
+    # 允许跨域访问的前端来源白名单（JSON 数组字符串），生产按实际部署域名收紧
+    cors_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    # 问答/流式接口限流：每来源 IP 每分钟允许的最大请求数（按 IP 计，宽容值兼顾同 NAT 内多人）
+    ratelimit_per_minute: int = 120
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

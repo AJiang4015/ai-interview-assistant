@@ -72,13 +72,18 @@ class SessionStore:
         """Generate Redis key for session messages."""
         return f"session:{session_id}:messages"
 
-    async def create_session(self, session_id: str) -> dict:
-        """Create a new session."""
+    def _user_sessions_key(self, username: str) -> str:
+        """Per-user session registration set（用于按用户 O(1) 列举与归属过滤）。"""
+        return f"user_sessions:{username}"
+
+    async def create_session(self, session_id: str, username: str | None = None) -> dict:
+        """Create a new session, optionally bound to a username."""
         if not self._client:
             raise ConnectionError("Redis not connected")
 
         session_data = {
             "session_id": session_id,
+            "username": username,
             "created_at": self._now(),
             "updated_at": self._now(),
             "turn_count": 0,
@@ -86,7 +91,9 @@ class SessionStore:
 
         key = self._session_key(session_id)
         await self._client.set(key, json.dumps(session_data), ex=self.ttl_seconds)
-        logger.info(f"Session created: {session_id}")
+        if username:
+            await self._client.sadd(self._user_sessions_key(username), session_id)
+        logger.info(f"Session created: {session_id} (user: {username})")
         return session_data
 
     async def get_session(self, session_id: str) -> Optional[dict]:
@@ -107,6 +114,18 @@ class SessionStore:
 
         key = self._session_key(session_id)
         return await self._client.exists(key) > 0
+
+    async def is_session_owned(self, session_id: str, username: str) -> bool | None:
+        """校验会话是否属于指定用户。
+
+        返回：True=本人；False=归属他人或旧无归属会话；None=Redis 中会话不存在（可能需从 SQLite 恢复）。
+        """
+        if not self._client:
+            return None
+        session = await self.get_session(session_id)
+        if not session:
+            return None
+        return session.get("username") == username
 
     async def add_message(
         self, session_id: str, role: str, content: str, metadata: Optional[dict] = None
@@ -174,31 +193,37 @@ class SessionStore:
         if not self._client:
             return False
 
+        # 记录归属用于同步注销 per-user 集合成员
+        owner = None
+        data = await self._client.get(self._session_key(session_id))
+        if data:
+            try:
+                owner = json.loads(data).get("username")
+            except json.JSONDecodeError:
+                pass
+
         keys = [self._session_key(session_id), self._messages_key(session_id)]
         deleted = await self._client.delete(*keys)
+        if owner:
+            await self._client.srem(self._user_sessions_key(owner), session_id)
         logger.info(f"Session deleted: {session_id}, keys removed: {deleted}")
         return deleted > 0
 
-    async def clear_all_sessions(self) -> int:
-        """Clear all sessions (use with caution)."""
+    async def clear_user_sessions(self, username: str) -> int:
+        """Clear all sessions belonging to a single user."""
         if not self._client:
             return 0
 
-        # Find and delete all session keys
-        cursor = 0
-        total_deleted = 0
-        while True:
-            cursor, keys = await self._client.scan(
-                cursor=cursor, match="session:*", count=100
-            )
-            if keys:
-                deleted = await self._client.delete(*keys)
-                total_deleted += deleted
-            if cursor == 0:
-                break
-
-        logger.info(f"Cleared {total_deleted} session keys")
-        return total_deleted
+        member_key = self._user_sessions_key(username)
+        session_ids = await self._client.smembers(member_key)
+        count = 0
+        for sid in session_ids:
+            keys = [self._session_key(sid), self._messages_key(sid)]
+            await self._client.delete(*keys)
+            count += 1
+        await self._client.delete(member_key)
+        logger.info(f"Cleared {count} session keys for user {username}")
+        return count
 
     async def get_session_count(self) -> int:
         """Get total number of active sessions."""
@@ -218,29 +243,26 @@ class SessionStore:
                 break
         return count
 
-    async def list_sessions(self) -> list[dict]:
-        """List all active sessions with metadata."""
+    async def list_sessions(self, username: str) -> list[dict]:
+        """List all active sessions belonging to the given user.
+
+        通过 per-user 集合索引（`user_sessions:{username}`）O(1) 列举，
+        并对归属做二次校验（过滤旧无归属会话，避免借助成员关系泄露）。
+        """
         if not self._client:
             return []
 
-        cursor = 0
-        session_keys = []
-        while True:
-            cursor, keys = await self._client.scan(
-                cursor=cursor, match="session:*", count=100
-            )
-            for key in keys:
-                if key.count(":") == 1:
-                    session_keys.append(key)
-            if cursor == 0:
-                break
+        member_key = self._user_sessions_key(username)
+        session_ids = await self._client.smembers(member_key)
 
         sessions = []
-        for key in session_keys:
-            data = await self._client.get(key)
+        for sid in session_ids:
+            data = await self._client.get(self._session_key(sid))
             if data:
                 try:
                     session = json.loads(data)
+                    if session.get("username") != username:
+                        continue
                     session_id = session["session_id"]
                     title = await self._get_session_title(session_id)
                     session["title"] = title

@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -17,7 +16,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 class AuthService:
     def __init__(self, user_store: UserStore):
         self.user_store = user_store
-        self.jwt_secret = os.environ.get("JWT_SECRET", "rag_interview_secret_key_2024")
+        # JWT 签名密钥强制从配置读取（由 .env 提供），缺失时 Settings 解析即失败，杜绝硬编码默认值
+        self.jwt_secret = settings.jwt_secret
         self.jwt_algorithm = "HS256"
         self.jwt_expire_hours = 24
 

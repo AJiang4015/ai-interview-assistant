@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from app.config import settings
@@ -30,8 +31,15 @@ class IndexService:
             chunk_overlap=settings.chunk_overlap
         )
         self._pipeline_obj = None
+        # 进程内索引互斥锁：build / add_document 串行执行，防止并发重建/追加
+        # 互相覆盖 FAISS 与 ingest_state 落盘状态（单 worker 约束下的最小并发保护）
+        self._index_lock = asyncio.Lock()
 
     async def build_index(self, rebuild: bool = False) -> BuildIndexResponse:
+        async with self._index_lock:
+            return await self._build_index_locked(rebuild)
+
+    async def _build_index_locked(self, rebuild: bool = False) -> BuildIndexResponse:
         kb_files = self.splitter.scan_md_files(settings.kb_path)
         if not kb_files:
             logger.warning("No document files found in knowledge base directory")
@@ -108,6 +116,10 @@ class IndexService:
         )
 
     async def add_document(self, file_path) -> BuildIndexResponse:
+        async with self._index_lock:
+            return await self._add_document_locked(file_path)
+
+    async def _add_document_locked(self, file_path) -> BuildIndexResponse:
         """增量索引单个文件：走 IndexPipeline（新 Chunker + 并发 + 幂等），
         追加到已有索引，不全量重建（内部 aadd_vectors 写锁）。"""
         file_path = Path(file_path)

@@ -1,7 +1,8 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 
+from app.api.auth import get_current_user
 from app.api.schemas import BaseModel, Field
 
 
@@ -21,7 +22,7 @@ class DeepDiveEndRequest(BaseModel):
     session_id: str
 
 
-router = APIRouter(prefix="/api/deepdive")
+router = APIRouter(prefix="/api/deepdive", dependencies=[Depends(get_current_user)])
 
 
 def _get_service():

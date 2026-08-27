@@ -4,9 +4,10 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 
+from app.api.auth import get_current_user
 from app.api.schemas import (
     QueryRequest, QueryResponse,
     BuildIndexRequest, BuildIndexResponse,
@@ -23,12 +24,16 @@ from app.exceptions import (
 )
 from app.services.rag_service import RAGService
 from app.services.index_service import IndexService
+from app.services.rate_limiter import rate_limit_dependency
 from app.utils.logger import get_logger
 from app.config import settings
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api")
+# 业务路由：全部需要登录（JWT），防止未授权访问/操作知识库与索引
+router = APIRouter(prefix="/api", dependencies=[Depends(get_current_user)])
+# 公开路由：仅健康检查，供 docker healthcheck / 前端探活使用，不暴露业务数据
+public_router = APIRouter(prefix="/api")
 
 
 def _get_rag() -> RAGService:
@@ -65,13 +70,18 @@ async def _add_document_async(file_path: Path):
         logger.exception(f"Background incremental index failed: {e}")
 
 
-@router.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+@router.post("/query", response_model=QueryResponse, dependencies=[Depends(rate_limit_dependency)])
+async def query(request: QueryRequest, current_user: dict = Depends(get_current_user)):
     rag = _get_rag()
     try:
-        return await rag.query(request.question, session_id=request.session_id)
+        return await rag.query(
+            request.question, session_id=request.session_id,
+            username=current_user.get("username"),
+        )
     except IndexNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e) or "索引未构建")
+    except PermissionError as e:
+        raise HTTPException(status_code=404, detail=str(e) or "会话不存在或无权访问")
     except EmbeddingAPIError as e:
         raise HTTPException(status_code=502, detail=str(e) or "Embedding 服务不可用")
     except LLMAPIError as e:
@@ -81,19 +91,27 @@ async def query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e) or "内部服务器错误")
 
 
-@router.post("/query/stream")
-async def query_stream(request: QueryRequest):
+@router.post("/query/stream", dependencies=[Depends(rate_limit_dependency)])
+async def query_stream(request: QueryRequest, current_user: dict = Depends(get_current_user)):
     """Stream query results via Server-Sent Events."""
     rag = _get_rag()
+    username = current_user.get("username")
+
+    # 归属预检：无权限/会话不存在直接返回 404，避免以 SSE 200 掩盖越权
+    resolved_session = await rag.resolve_session(request.session_id, username)
+    if resolved_session is None:
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
 
     async def event_generator():
         try:
             async for event in rag.stream_query(
-                request.question, session_id=request.session_id
+                request.question, session_id=resolved_session, username=username
             ):
                 yield event
         except IndexNotFoundError as e:
             yield f"event: error\ndata: {json.dumps({'message': str(e) or '索引未构建'}, ensure_ascii=False)}\n\n"
+        except PermissionError as e:
+            yield f"event: error\ndata: {json.dumps({'message': str(e) or '会话不存在或无权访问'}, ensure_ascii=False)}\n\n"
         except EmbeddingAPIError as e:
             yield f"event: error\ndata: {json.dumps({'message': str(e) or 'Embedding 服务不可用'}, ensure_ascii=False)}\n\n"
         except LLMAPIError as e:
@@ -131,7 +149,7 @@ async def index_status():
     return indexer.get_status()
 
 
-@router.get("/health", response_model=HealthResponse)
+@public_router.get("/health", response_model=HealthResponse)
 async def health_check():
     from app.main import faiss_store, embedding_service, llm_client, session_store
     redis_status = "available" if session_store and session_store.is_connected else "disconnected"
@@ -147,11 +165,11 @@ async def health_check():
 # ==================== Session Management ====================
 
 @router.post("/sessions", response_model=SessionResponse)
-async def create_session(request: CreateSessionRequest = Body(default_factory=CreateSessionRequest)):
-    """Create a new conversation session."""
+async def create_session(request: CreateSessionRequest = Body(default_factory=CreateSessionRequest), current_user: dict = Depends(get_current_user)):
+    """Create a new conversation session bound to the current user."""
     rag = _get_rag()
     try:
-        session = await rag.create_session(request.session_id)
+        session = await rag.create_session(request.session_id, username=current_user.get("username"))
         return SessionResponse(**session)
     except ConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -161,11 +179,11 @@ async def create_session(request: CreateSessionRequest = Body(default_factory=Cr
 
 
 @router.get("/sessions", response_model=SessionListResponse)
-async def list_sessions():
-    """List all active sessions."""
+async def list_sessions(current_user: dict = Depends(get_current_user)):
+    """List sessions visible to the current user (Redis 活跃 + SQLite 长期)."""
     rag = _get_rag()
     try:
-        result = await rag.list_sessions()
+        result = await rag.list_sessions(username=current_user.get("username"))
         return SessionListResponse(
             total_sessions=result["total_sessions"],
             sessions=[SessionResponse(**s) for s in result["sessions"]],
@@ -178,11 +196,13 @@ async def list_sessions():
 
 
 @router.get("/sessions/{session_id}", response_model=SessionHistoryResponse)
-async def get_session_history(session_id: str):
-    """Get conversation history for a specific session."""
+async def get_session_history(session_id: str, current_user: dict = Depends(get_current_user)):
+    """Get conversation history for a specific session (归属校验)."""
     rag = _get_rag()
     try:
-        history = await rag.get_session_history(session_id)
+        history = await rag.get_session_history(session_id, username=current_user.get("username"))
+        if history is None:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
         return SessionHistoryResponse(
             session_id=session_id,
             history=history,
@@ -196,12 +216,14 @@ async def get_session_history(session_id: str):
 
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
-async def delete_session(session_id: str):
-    """Delete a specific session."""
+async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a specific session (归属校验，非本人 → 404)."""
     rag = _get_rag()
     try:
-        success = await rag.delete_session(session_id)
-        return DeleteSessionResponse(success=success, session_id=session_id)
+        result = await rag.delete_session(session_id, username=current_user.get("username"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        return DeleteSessionResponse(success=result, session_id=session_id)
     except ConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -210,16 +232,11 @@ async def delete_session(session_id: str):
 
 
 @router.delete("/sessions", response_model=ClearSessionsResponse)
-async def clear_all_sessions(confirm: bool = Query(default=False)):
-    """Clear all sessions (requires confirm=true)."""
-    if not confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="请添加 confirm=true 参数以确认清空所有会话",
-        )
+async def clear_sessions(current_user: dict = Depends(get_current_user)):
+    """Clear all sessions belonging to the current user."""
     rag = _get_rag()
     try:
-        deleted_count = await rag.clear_all_sessions()
+        deleted_count = await rag.clear_user_sessions(username=current_user.get("username"))
         return ClearSessionsResponse(success=True, deleted_count=deleted_count)
     except ConnectionError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -335,13 +352,14 @@ async def delete_file(filename: str):
 # ==================== Search ====================
 
 @router.get("/search", response_model=SearchResponse)
-async def search_messages(q: str = Query(..., min_length=1)):
-    """跨会话搜索历史对话"""
+async def search_messages(q: str = Query(..., min_length=1), current_user: dict = Depends(get_current_user)):
+    """跨会话搜索历史对话（仅当前用户可见会话）"""
     from app.main import search_store
     if search_store is None:
         raise HTTPException(status_code=503, detail="搜索服务未初始化")
 
-    results = search_store.search(q)
+    username = current_user.get("username")
+    results = search_store.search(q, username=username)
 
     # 构建带上下文的关键词高亮片段
     search_results = []

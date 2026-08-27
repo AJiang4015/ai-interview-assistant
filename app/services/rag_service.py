@@ -68,12 +68,18 @@ class RAGService:
             logger.exception(f"流式幻觉评估失败：{session_id}")
 
     async def query(
-        self, question: str, session_id: str | None = None
+        self, question: str, session_id: str | None = None, username: str | None = None
     ) -> QueryResponse:
         if not self.faiss.is_loaded():
             raise IndexNotFoundError("索引未构建，请先调用 /api/index/build")
-        logger.info(f"Processing query: {question[:50]}... (session: {session_id})")
-        session_id = await self._ensure_session(session_id)
+        logger.info(f"Processing query: {question[:50]}... (session: {session_id}, user: {username})")
+        if username:
+            sid = await self.resolve_session(session_id, username)
+            if sid is None:
+                raise PermissionError("会话不存在或无权访问")
+            session_id = sid
+        else:
+            session_id = await self._ensure_session(session_id)
 
         # 1. 查询改写
         retrieval_query = question
@@ -133,7 +139,7 @@ class RAGService:
         except Exception:
             logger.exception(f"幻觉评估失败：{session_id}")
 
-        await self._save_to_session(session_id, question, answer, unique_results)
+        await self._save_to_session(session_id, username, question, answer, unique_results)
 
         sources = [
             SourceInfo(file=r.source_file, chunk_index=r.chunk_index, score=r.score)
@@ -146,13 +152,20 @@ class RAGService:
         )
 
     async def stream_query(
-        self, question: str, session_id: str | None = None
+        self, question: str, session_id: str | None = None, username: str | None = None
     ):
         if not self.faiss.is_loaded():
             raise IndexNotFoundError("索引未构建，请先调用 /api/index/build")
 
-        logger.info(f"Processing stream query: {question[:50]}... (session: {session_id})")
-        session_id = await self._ensure_session(session_id)
+        logger.info(f"Processing stream query: {question[:50]}... (session: {session_id}, user: {username})")
+        if username:
+            sid = await self.resolve_session(session_id, username)
+            if sid is None:
+                yield self._sse_event("error", {"message": "会话不存在或无权访问"})
+                return
+            session_id = sid
+        else:
+            session_id = await self._ensure_session(session_id)
         yield self._sse_event("session", {"session_id": session_id})
 
         # 1. 查询改写
@@ -251,7 +264,7 @@ class RAGService:
             query=question, context=context, answer=answer, session_id=session_id,
         ))
 
-        await self._save_to_session(session_id, question, answer, unique_results)
+        await self._save_to_session(session_id, username, question, answer, unique_results)
 
         # 6. 写入缓存
         if self.cache and self.cache.available:
@@ -269,15 +282,71 @@ class RAGService:
         """Format an SSE event."""
         return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-    async def _ensure_session(self, session_id: str | None) -> str:
+    async def _ensure_session(self, session_id: str | None, username: str | None = None) -> str:
         """Ensure a session exists, creating one if needed."""
         if not session_id and self.session_store and self.session_store.is_connected:
             session_id = str(uuid.uuid4())
-            await self.session_store.create_session(session_id)
+            await self.session_store.create_session(session_id, username)
             if self.search_store:
-                self.search_store.index_session(session_id)
-            logger.info(f"Auto-created session: {session_id}")
+                self.search_store.index_session(session_id, username=username)
+            logger.info(f"Auto-created session: {session_id} (user: {username})")
         return session_id
+
+    async def resolve_session(self, session_id: str | None, username: str) -> str | None:
+        """解析并校验会话归属，返回可用 session_id；无权/无该会话返回 None（由路由转 404）。
+
+        - session_id 为空：新建会话并归属 username，返回新 id；
+        - Redis 有会话：校验归属（他人/旧无归属会话 → None）；
+        - Redis 无（TTL 过期）：若持久化开启且 SQLite 归属当前用户 → 恢复回填 Redis；
+          若 SQLite 归属他人 → None（避免越权续写他人会话）；
+        - Redis 与 SQLite 均无：新建会话归属 username（兼容用户自定义 id）。
+        """
+        if not self.session_store or not self.session_store.is_connected:
+            # Redis 不可用：无法校验归属，也不会自动新建；有 session_id 原样透传（降级为无上下文）
+            return session_id
+        if not session_id:
+            return await self._create_and_bound_session(None, username)
+
+        owned = await self.session_store.is_session_owned(session_id, username)
+        if owned is True:
+            return session_id
+        if owned is False:
+            return None
+
+        # owned is None：Redis 无该会话（可能 TTL 已过期）
+        if settings.enable_history_persistence and self.search_store:
+            owner = self.search_store.get_session_owner(session_id)
+            if owner is not None:
+                if owner == username:
+                    await self._restore_from_sqlite(session_id, username)
+                    return session_id
+                return None  # 他人持久化会话 → 越权
+
+        # Redis 与 SQLite 均无记录 → 新建
+        return await self._create_and_bound_session(session_id, username)
+
+    async def _create_and_bound_session(
+        self, session_id: str | None, username: str
+    ) -> str:
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        await self.session_store.create_session(session_id, username)
+        if self.search_store:
+            self.search_store.index_session(session_id, username=username)
+        return session_id
+
+    async def _restore_from_sqlite(self, session_id: str, username: str) -> None:
+        """从 SQLite 恢复会话历史并回填 Redis，供 Redis TTL 过期后继续短期记忆。"""
+        try:
+            messages = self.search_store.get_messages(session_id)
+            if not messages:
+                return
+            await self.session_store.create_session(session_id, username)
+            for m in messages:
+                await self.session_store.add_message(session_id, m["role"], m["content"])
+            logger.info(f"Restored {len(messages)} messages for session {session_id} from SQLite")
+        except Exception as e:
+            logger.error(f"Failed to restore session {session_id} from SQLite: {e}")
 
     def _deduplicate_results(self, results: list) -> list:
         """Remove duplicate results based on content."""
@@ -323,7 +392,7 @@ class RAGService:
         return f"参考资料：\n{context}\n\n问题：{question}"
 
     async def _save_to_session(
-        self, session_id: str, question: str, answer: str, unique_results: list
+        self, session_id: str, username: str | None, question: str, answer: str, unique_results: list
     ):
         """Save conversation to session."""
         if session_id and self.session_store and self.session_store.is_connected:
@@ -346,7 +415,7 @@ class RAGService:
                     self.search_store.index_message(session_id, "assistant", answer)
                     # 用用户提问更新会话标题（截断 30 字符，与 Redis 逻辑一致）
                     title = question[:30] + "..." if len(question) > 30 else question
-                    self.search_store.index_session(session_id, title=title)
+                    self.search_store.index_session(session_id, title=title, username=username)
                 logger.info(f"Conversation saved to session: {session_id}")
             except Exception as e:
                 logger.error(f"Failed to save conversation: {e}")
@@ -387,25 +456,37 @@ class RAGService:
             # Fallback to simple prompt
             return f"参考资料：\n{context}\n\n问题：{question}"
 
-    async def create_session(self, session_id: str | None = None) -> dict:
-        """Create a new conversation session."""
+    async def create_session(self, session_id: str | None = None, username: str | None = None) -> dict:
+        """Create a new conversation session, bound to the given user."""
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
         if not session_id:
-            import uuid
-
             session_id = str(uuid.uuid4())
 
-        result = await self.session_store.create_session(session_id)
+        result = await self.session_store.create_session(session_id, username)
         if self.search_store:
-            self.search_store.index_session(session_id)
+            self.search_store.index_session(session_id, username=username)
         return result
 
-    async def get_session_history(self, session_id: str) -> list[dict]:
-        """Get conversation history for a session."""
+    async def get_session_history(self, session_id: str, username: str | None = None) -> list | None:
+        """Get conversation history for a session（按用户隔离，Redis 过期时自 SQLite 恢复）。
+
+        返回 None 表示会话不存在或无权访问（路由转 404）。
+        """
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
+
+        if username:
+            status = await self.session_store.is_session_owned(session_id, username)
+            if status is False:
+                return None
+            if status is None:
+                if (settings.enable_history_persistence and self.search_store
+                        and self.search_store.get_session_owner(session_id) == username):
+                    await self._restore_from_sqlite(session_id, username)
+                else:
+                    return None
 
         raw_history = await self.session_store.get_history(session_id)
 
@@ -421,33 +502,67 @@ class RAGService:
 
         return history
 
-    async def delete_session(self, session_id: str) -> bool:
-        """Delete a conversation session."""
+    async def delete_session(self, session_id: str, username: str | None = None) -> bool | None:
+        """Delete a conversation session（按用户归属校验）。
+
+        返回 True=已删除；None=会话不存在或无权访问（路由转 404）。
+        """
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
-        result = await self.session_store.delete_session(session_id)
+        if username:
+            status = await self.session_store.is_session_owned(session_id, username)
+            sqlite_owner = self.search_store.get_session_owner(session_id) if self.search_store else None
+            if not (status is True or sqlite_owner == username):
+                return None
+
+        await self.session_store.delete_session(session_id)
         if self.search_store:
             self.search_store.delete_session(session_id)
-        return result
+        return True
 
-    async def list_sessions(self) -> dict:
-        """List all active sessions."""
+    async def list_sessions(self, username: str) -> dict:
+        """List all sessions visible to the user: Redis 活跃会话并合并 SQLite 长期会话。"""
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
-        sessions = await self.session_store.list_sessions()
-        return {
-            "total_sessions": len(sessions),
-            "sessions": sessions,
-        }
+        merged: dict[str, dict] = {}
+        for s in await self.session_store.list_sessions(username):
+            merged[s["session_id"]] = s
 
-    async def clear_all_sessions(self) -> int:
-        """Clear all conversation sessions."""
+        if settings.enable_history_persistence and self.search_store:
+            try:
+                for row in self.search_store.list_user_sessions(username):
+                    sid = row["session_id"]
+                    if sid in merged:
+                        # 保留较新更新时间（Redis 会话可能刚被写入）
+                        merged[sid]["updated_at"] = max(
+                            merged[sid].get("updated_at") or "",
+                            row.get("updated_at") or row.get("created_at") or "",
+                        )
+                        continue
+                    merged[sid] = {
+                        "session_id": sid,
+                        "title": row.get("title"),
+                        "created_at": row.get("created_at", ""),
+                        "updated_at": row.get("updated_at") or row.get("created_at") or "",
+                        "turn_count": 0,
+                        "from_persistence": True,
+                    }
+            except Exception as e:
+                logger.error(f"Failed to merge persisted sessions: {e}")
+
+        sessions = sorted(
+            merged.values(), key=lambda s: s.get("updated_at", ""), reverse=True
+        )
+        return {"total_sessions": len(sessions), "sessions": sessions}
+
+    async def clear_user_sessions(self, username: str) -> int:
+        """Clear all sessions belonging to the current user（Redis + SQLite 同清）。"""
         if not self.session_store or not self.session_store.is_connected:
             raise ConnectionError("Redis session store is not available")
 
-        result = await self.session_store.clear_all_sessions()
+        result = await self.session_store.clear_user_sessions(username)
         if self.search_store:
-            self.search_store.clear_all()
+            self.search_store.delete_user_sessions(username)
         return result

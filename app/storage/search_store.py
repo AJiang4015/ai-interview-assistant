@@ -70,6 +70,18 @@ class SearchStore:
                 END;
             """)
 
+            # 迁移：为存量库补全 user 隔离相关列（幂等）
+            session_cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(sessions)")
+            }
+            if "username" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN username TEXT")
+            if "updated_at" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN updated_at TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)"
+            )
+
             # 迁移现有数据到 FTS5（如果 FTS5 表为空）
             existing_count = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]
             if existing_count == 0:
@@ -84,15 +96,20 @@ class SearchStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def index_session(self, session_id: str, title: Optional[str] = None):
-        """写入或更新会话元数据"""
+    def index_session(
+        self, session_id: str, title: Optional[str] = None, username: Optional[str] = None
+    ):
+        """写入或更新会话元数据。username 提供时用于首建归属与用户隔离过滤。"""
         try:
             with self._get_conn() as conn:
                 conn.execute(
-                    """INSERT INTO sessions (session_id, title, created_at)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(session_id) DO UPDATE SET title = ?""",
-                    (session_id, title, self._now(), title)
+                    """INSERT INTO sessions (session_id, title, created_at, updated_at, username)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(session_id) DO UPDATE SET
+                           title = COALESCE(excluded.title, sessions.title),
+                           updated_at = excluded.updated_at,
+                           username = COALESCE(excluded.username, sessions.username)""",
+                    (session_id, title, self._now(), self._now(), username)
                 )
         except Exception as e:
             logger.error(f"Failed to index session {session_id}: {e}")
@@ -155,18 +172,19 @@ class SearchStore:
         except Exception as e:
             logger.error(f"Failed to cleanup expired sessions: {e}")
 
-    def search(self, keyword: str, limit: int = 50) -> list[dict]:
-        """全文搜索消息，使用 FTS5 trigram 分词器
+    def search(self, keyword: str, username: str, limit: int = 50) -> list[dict]:
+        """全文搜索消息，使用 FTS5 trigram 分词器（仅返回指定用户可见的会话）
 
         注意事项：
         - trigram 分词器对少于 3 字符的查询词返回 0 结果（因为无法形成 trigram）
         - 对短词（< 3 字符）自动降级到 LIKE 搜索
         - FTS5 整体失败时降级到 LIKE 搜索
+        - username 过滤：SESSION 无归属（legacy，username 为 NULL/空）或归属他人时不可见
         """
         # 短词降级：trigram 对 1-2 字符的词无效
         stripped = keyword.strip()
         if len(stripped) < 3:
-            return self._search_like_fallback(stripped, limit)
+            return self._search_like_fallback(stripped, username, limit)
 
         try:
             with self._get_conn() as conn:
@@ -175,17 +193,17 @@ class SearchStore:
                     """SELECT m.session_id, m.role, m.content, m.created_at, s.title
                        FROM messages_fts f
                        JOIN messages m ON f.rowid = m.id
-                       LEFT JOIN sessions s ON m.session_id = s.session_id
-                       WHERE messages_fts MATCH ?
+                       JOIN sessions s ON m.session_id = s.session_id
+                       WHERE messages_fts MATCH ? AND s.username = ?
                        ORDER BY rank
                        LIMIT ?""",
-                    (stripped, limit)
+                    (stripped, username, limit)
                 ).fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"FTS5 search failed for '{keyword}': {e}")
             # 降级：使用 LIKE 搜索
-            return self._search_like_fallback(stripped, limit)
+            return self._search_like_fallback(stripped, username, limit)
 
     @staticmethod
     def _should_use_prefix(keyword: str) -> bool:
@@ -211,23 +229,90 @@ class SearchStore:
         escaped = keyword.replace('"', '""')
         return f'"{escaped}"'
 
-    def _search_like_fallback(self, keyword: str, limit: int = 50) -> list[dict]:
-        """LIKE 搜索降级方案"""
+    def _search_like_fallback(self, keyword: str, username: str, limit: int = 50) -> list[dict]:
+        """LIKE 搜索降级方案（限定用户可见会话）"""
         try:
             with self._get_conn() as conn:
                 rows = conn.execute(
                     """SELECT m.session_id, m.role, m.content, m.created_at, s.title
                        FROM messages m
-                       LEFT JOIN sessions s ON m.session_id = s.session_id
-                       WHERE m.content LIKE ?
+                       JOIN sessions s ON m.session_id = s.session_id
+                       WHERE m.content LIKE ? AND s.username = ?
                        ORDER BY m.created_at DESC
                        LIMIT ?""",
-                    (f"%{keyword}%", limit)
+                    (f"%{keyword}%", username, limit)
                 ).fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"LIKE fallback search failed for '{keyword}': {e}")
             return []
+
+    def list_user_sessions(self, username: str, limit: int = 100) -> list[dict]:
+        """按用户列出长期持久化会话（供 Redis 过期后恢复侧边栏）。"""
+        try:
+            with self._get_conn() as conn:
+                rows = conn.execute(
+                    """SELECT session_id, title, created_at, updated_at
+                       FROM sessions
+                       WHERE username = ?
+                       ORDER BY COALESCE(updated_at, created_at) DESC
+                       LIMIT ?""",
+                    (username, limit)
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"Failed to list sessions for {username}: {e}")
+            return []
+
+    def get_session_owner(self, session_id: str) -> Optional[str]:
+        """返回会话归属用户名；会话不存在返回 None。"""
+        try:
+            with self._get_conn() as conn:
+                row = conn.execute(
+                    "SELECT username FROM sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                return row["username"] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get owner for session {session_id}: {e}")
+            return None
+
+    def get_messages(self, session_id: str) -> list[dict]:
+        """按 id 顺序取回会话全部消息，用于 Redis 过期后恢复历史。"""
+        try:
+            with self._get_conn() as conn:
+                rows = conn.execute(
+                    """SELECT role, content, created_at
+                       FROM messages WHERE session_id = ?
+                       ORDER BY id""",
+                    (session_id,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"Failed to get messages for session {session_id}: {e}")
+            return []
+
+    def delete_user_sessions(self, username: str) -> int:
+        """删除指定用户的全部会话及其消息，返回删除的会话数。"""
+        try:
+            with self._get_conn() as conn:
+                ids = [r["session_id"] for r in conn.execute(
+                    "SELECT session_id FROM sessions WHERE username = ?", (username,)
+                ).fetchall()]
+                for sid in ids:
+                    conn.execute("DELETE FROM messages WHERE session_id = ?", (sid,))
+                deleted = conn.execute(
+                    "DELETE FROM sessions WHERE username = ?", (username,)
+                ).rowcount
+                if ids:
+                    conn.executescript("""
+                        INSERT INTO messages_fts(messages_fts) VALUES('rebuild');
+                    """)
+                logger.info(f"Deleted {deleted} sessions for user {username}")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete sessions for {username}: {e}")
+            return 0
 
     @staticmethod
     def _now() -> str:

@@ -16,3 +16,7 @@ class LLMAPIError(RAGSystemError):
 
 class IndexBuildError(RAGSystemError):
     """索引构建失败"""
+
+
+class AuthorizationError(Exception):
+    """数据归属授权失败：登录用户不可访问某个资源（映射 HTTP 403）。"""
