@@ -60,6 +60,29 @@ const fileEls = {
     btnRefresh: document.getElementById('btn-refresh-files')
 };
 
+// 守卫：为所有 fetch 统一注入 JWT（等价 axios 拦截器）。
+// token 缺失时 getAuthHeaders() 返回空对象，因此公开接口（/api/health、/api/auth/*）不受影响。
+// 后端已把所有业务路由纳入 JWT 鉴权，故此处的统一注入是前端保证登录态的关键入口。
+// note: getAuthHeaders / handleAuthExpired / showLoginPrompt 均为模块级函数声明，会被提升，此处可安全引用。
+{
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = async (input, init = {}) => {
+        const headers = { ...getAuthHeaders(), ...(init.headers || {}) };
+        const res = await _origFetch(input, { ...init, headers });
+        // token 失效或未登录：清除缓存并引导重新登录（排除登录/注册接口自身）
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (res.status === 401 && url.indexOf('/api/auth/') === -1) {
+            handleAuthExpired();
+        }
+        return res;
+    };
+}
+
+function applyXhrAuth(xhr) {
+    const h = getAuthHeaders();
+    if (h.Authorization) xhr.setRequestHeader('Authorization', h.Authorization);
+}
+
 // ============ Navigation ============
 els.navItems.forEach(item => {
     item.addEventListener('click', () => {
@@ -496,6 +519,32 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// 生成可折叠详情块（默认折叠）；content 为空时返回空串（判空降级）
+function buildEvalCollapse(label, content) {
+    if (!content) return '';
+    return `
+        <div class="eval-collapse">
+            <button type="button" class="eval-collapse-toggle" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>
+            <div class="eval-collapse-body" style="display:none;">${escapeHtml(content)}</div>
+        </div>
+    `;
+}
+
+// 折叠事件委托：容器级绑定一次，兼容动态插入内容
+function bindEvalCollapse(container) {
+    if (!container) return;
+    container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.eval-collapse-toggle');
+        if (!btn) return;
+        const body = btn.parentElement.querySelector('.eval-collapse-body');
+        if (!body) return;
+        const hidden = body.style.display === 'none';
+        body.style.display = hidden ? 'block' : 'none';
+        const label = btn.dataset.label || '';
+        btn.textContent = hidden ? ('收起' + label) : label;
+    });
 }
 
 // DOMPurify 白名单配置：只允许 Markdown 渲染产生的 HTML 标签和属性
@@ -1152,6 +1201,7 @@ function handleFileUpload(files) {
     });
 
     xhr.open('POST', `${API_BASE}/api/files/upload`);
+    applyXhrAuth(xhr);
     xhr.send(formData);
 }
 
@@ -1284,6 +1334,87 @@ let authState = {
     isRegisterMode: false
 };
 
+// Pydantic 422 校验错误的字段名 -> 中文映射。
+const AUTH_FIELD_LABELS = {
+    username: '用户名',
+    password: '密码',
+    display_name: '显示名称'
+};
+
+// Pydantic v2 校验错误类型 -> 中文消息模板。不支持的类型回退显示原始 msg。
+function formatValidationError(item) {
+    const loc = item.loc || [];
+    // loc 形如 ["body", "username"]，取最后一个作为字段名
+    let field = loc[loc.length - 1];
+    field = typeof field === 'string' ? field : null;
+    const label = field ? (AUTH_FIELD_LABELS[field] || field) : null;
+
+    const type = item.type || '';
+    const ctx = item.ctx || {};
+    const minLen = typeof ctx.min_length === 'number' ? ctx.min_length : null;
+    const maxLen = typeof ctx.max_length === 'number' ? ctx.max_length : null;
+
+    let message = null;
+    if (type === 'string_too_short' && minLen !== null) {
+        message = (label ? `${label}长度至少 ${minLen} 个字符` : `长度至少 ${minLen} 个字符`);
+    } else if (type === 'string_too_long' && maxLen !== null) {
+        message = (label ? `${label}长度不能超过 ${maxLen} 个字符` : `长度不能超过 ${maxLen} 个字符`);
+    } else if (type === 'missing' && label) {
+        message = `${label}不能为空`;
+    } else if (type === 'string_type' && label) {
+        message = `${label}格式不正确`;
+    } else {
+        // 未知类型：回退原始 msg，保证不丢信息
+        message = item.msg || '请求参数有误';
+    }
+    return message;
+}
+
+// 解析 API 错误响应：
+// - detail 为字符串（400/401 等）-> 原样返回；
+// - detail 为数组（Pydantic 422）-> 逐条中文化，返回字符串数组；
+// - 其他 -> fallback。
+function parseApiError(errJson, status, fallback) {
+    if (errJson && typeof errJson.detail === 'string') {
+        return errJson.detail || fallback;
+    }
+    if (errJson && Array.isArray(errJson.detail)) {
+        const messages = errJson.detail
+            .map(item => formatValidationError(item))
+            .filter(Boolean);
+        if (messages.length > 0) {
+            return messages;
+        }
+    }
+    if (fallback) return fallback;
+    return status ? `请求失败（HTTP ${status}）` : '请求失败';
+}
+
+function getAuthErrorEl() {
+    return document.getElementById('auth-error');
+}
+
+// 在登录模态框表单上方展示验证错误（多条逐行），并附加一条汇总 toast。
+function showAuthError(message) {
+    const el = getAuthErrorEl();
+    const elEls = Array.isArray(message) ? message : [message];
+    const messages = elEls.filter(Boolean);
+    if (el && messages.length > 0) {
+        const safeText = messages.map(m => escapeHtml(String(m)));
+        el.innerHTML = safeText.join('<br>');
+        el.style.display = 'block';
+    }
+    showToast(Array.isArray(message) ? message[0] : message, 'error');
+}
+
+function clearAuthError() {
+    const el = getAuthErrorEl();
+    if (el) {
+        el.innerHTML = '';
+        el.style.display = 'none';
+    }
+}
+
 function initAuth() {
     authState.token = localStorage.getItem(AUTH_TOKEN_KEY);
     authState.user = JSON.parse(localStorage.getItem(AUTH_USER_KEY) || 'null');
@@ -1317,6 +1448,7 @@ function initAuth() {
 function openLoginModal() {
     authState.isRegisterMode = false;
     updateAuthModalUI();
+    clearAuthError();
     document.getElementById('login-modal').style.display = 'flex';
     setTimeout(() => document.getElementById('login-username').focus(), 100);
 }
@@ -1328,6 +1460,7 @@ function closeLoginModal() {
 function switchAuthMode() {
     authState.isRegisterMode = !authState.isRegisterMode;
     updateAuthModalUI();
+    clearAuthError();
 }
 
 function updateAuthModalUI() {
@@ -1388,8 +1521,12 @@ async function handleAuthSubmit() {
         }
 
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || '请求失败');
+            let errJson = null;
+            try { errJson = await res.json(); } catch { errJson = null; }
+            // 422 时 detail 为数组，parseApiError 负责中文化；400/401 字符串原样展示
+            const message = parseApiError(errJson, res.status);
+            showAuthError(message);
+            return;
         }
 
         const data = await res.json();
@@ -1400,15 +1537,19 @@ async function handleAuthSubmit() {
         localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
 
         showUserPanel();
+        clearAuthError();
         closeLoginModal();
         showToast(authState.isRegisterMode ? '注册成功' : '登录成功', 'success');
+
+        // 登录/注册后拉取当前用户自己的会话列表，避免残留上一用户的会话
+        await loadSessions();
 
         document.getElementById('login-username').value = '';
         document.getElementById('login-password').value = '';
         document.getElementById('register-display-name').value = '';
 
     } catch (e) {
-        showToast(e.message, 'error');
+        showAuthError('网络错误，请稍后重试');
     } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -1457,6 +1598,16 @@ function getAuthHeaders() {
     return {};
 }
 
+// token 失效或未登录时：清除缓存并回到登录提示态
+function handleAuthExpired() {
+    authState.token = null;
+    authState.user = null;
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_USER_KEY);
+    showLoginPrompt();
+    showToast('登录已过期，请重新登录', 'error');
+}
+
 // ============ Init ============
 checkHealth();
 loadIndexStatus();
@@ -1501,6 +1652,11 @@ const interviewEls = {
     evaluationArea: document.getElementById('evaluation-area'),
     evaluationScore: document.getElementById('evaluation-score'),
     evaluationComment: document.getElementById('evaluation-comment'),
+    evaluationDetail: document.getElementById('evaluation-detail'),
+    evaluationReason: document.getElementById('evaluation-reason'),
+    referenceBlock: document.getElementById('reference-block'),
+    btnToggleReference: document.getElementById('btn-toggle-reference'),
+    referenceAnswer: document.getElementById('reference-answer'),
     evaluationTags: document.getElementById('evaluation-tags'),
     evaluationActions: document.getElementById('evaluation-actions'),
     btnNextQuestion: document.getElementById('btn-next-question'),
@@ -1526,6 +1682,9 @@ const interviewEls = {
     resumeFileInfo: document.getElementById('resume-file-info'),
     resumeFileName: document.getElementById('resume-file-name'),
     resumeFileRemove: document.getElementById('resume-file-remove'),
+    resumeUploadProgress: document.getElementById('resume-upload-progress'),
+    resumeUploadProgressFill: document.getElementById('resume-upload-progress-fill'),
+    resumeUploadProgressText: document.getElementById('resume-upload-progress-text'),
     jdInput: document.getElementById('jd-input'),
 };
 
@@ -1566,6 +1725,15 @@ function initInterview() {
     interviewEls.btnNextQuestion.addEventListener('click', goNextQuestion);
     interviewEls.btnReanswer.addEventListener('click', reanswerQuestion);
     interviewEls.btnEndAfterAnswer.addEventListener('click', endInterview);
+
+    // 参考答案折叠切换（静态按钮，仅绑定一次）
+    if (interviewEls.btnToggleReference) {
+        interviewEls.btnToggleReference.addEventListener('click', () => {
+            const hidden = interviewEls.referenceAnswer.style.display === 'none';
+            interviewEls.referenceAnswer.style.display = hidden ? 'block' : 'none';
+            interviewEls.btnToggleReference.textContent = hidden ? '收起参考答案' : '查看参考答案';
+        });
+    }
 
     // 回答输入
     interviewEls.answerInput.addEventListener('input', () => {
@@ -1624,47 +1792,74 @@ function initInterview() {
     });
 }
 
-async function startInterview() {
+function startInterview() {
     if (!interviewState.position) return;
 
     showInterviewLoading('AI 面试官正在出题...');
     interviewState.isComplete = false;
 
-    try {
-        const formData = new FormData();
-        formData.append('position', interviewState.position);
+    const formData = new FormData();
+    formData.append('position', interviewState.position);
 
-        if (interviewState.resumeFile) {
-            formData.append('resume_file', interviewState.resumeFile);
-        }
-
-        const jdText = interviewEls.jdInput.value.trim();
-        if (jdText) {
-            formData.append('jd_text', jdText);
-        }
-
-        const res = await fetch(`${API_BASE}/api/interview/start`, {
-            method: 'POST',
-            body: formData,
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || '请求失败');
-        }
-
-        const data = await res.json();
-        interviewState.sessionId = data.session_id;
-        interviewState.currentQuestionId = data.question.id;
-        interviewState.currentRound = data.question.round;
-        interviewState.nextQuestion = null;
-        interviewState.reanswering = false;
-
-        showInterviewProgress(data.question);
-    } catch (err) {
-        showToast('error', '出题失败: ' + err.message);
-        showInterviewReady();
+    if (interviewState.resumeFile) {
+        formData.append('resume_file', interviewState.resumeFile);
     }
+
+    const jdText = interviewEls.jdInput.value.trim();
+    if (jdText) {
+        formData.append('jd_text', jdText);
+    }
+
+    // 有简历时显示上传进度条
+    if (interviewState.resumeFile && interviewEls.resumeUploadProgress) {
+        interviewEls.resumeUploadProgress.style.display = 'flex';
+        interviewEls.resumeUploadProgressFill.style.width = '0%';
+        interviewEls.resumeUploadProgressText.textContent = `上传中: ${interviewState.resumeFile.name}`;
+    }
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && interviewEls.resumeUploadProgress) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            interviewEls.resumeUploadProgressFill.style.width = percent + '%';
+            interviewEls.resumeUploadProgressText.textContent = `上传中... ${percent}%`;
+        }
+    });
+
+    xhr.addEventListener('load', () => {
+        if (interviewEls.resumeUploadProgress) {
+            interviewEls.resumeUploadProgress.style.display = 'none';
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+            let data;
+            try { data = JSON.parse(xhr.responseText); } catch { data = null; }
+            if (!data) { showToast('error', '出题失败: 响应解析失败'); showInterviewReady(); return; }
+            interviewState.sessionId = data.session_id;
+            interviewState.currentQuestionId = data.question.id;
+            interviewState.currentRound = data.question.round;
+            interviewState.nextQuestion = null;
+            interviewState.reanswering = false;
+            showInterviewProgress(data.question);
+        } else {
+            let errMsg = '出题失败';
+            try { const errData = JSON.parse(xhr.responseText); errMsg = '出题失败: ' + (errData.detail || '请求失败'); } catch {}
+            showToast('error', errMsg);
+            showInterviewReady();
+        }
+    });
+
+    xhr.addEventListener('error', () => {
+        if (interviewEls.resumeUploadProgress) {
+            interviewEls.resumeUploadProgress.style.display = 'none';
+        }
+        showToast('error', '网络错误，出题失败');
+        showInterviewReady();
+    });
+
+    xhr.open('POST', `${API_BASE}/api/interview/start`);
+    applyXhrAuth(xhr);
+    xhr.send(formData);
 }
 
 async function submitAnswer() {
@@ -1868,6 +2063,23 @@ function showEvaluation(evaluation) {
     interviewEls.evaluationArea.style.display = 'block';
     interviewEls.evaluationScore.textContent = `${evaluation.score}/10`;
     interviewEls.evaluationComment.textContent = evaluation.comment || '';
+
+    // 评分原因 + 参考答案（判空降级：缺失字段或元素不存在时隐藏对应区块）
+    const reason = evaluation.score_reason || '';
+    const ref = evaluation.reference_answer || '';
+    if (interviewEls.evaluationReason) {
+        interviewEls.evaluationReason.textContent = reason;
+        const reasonBlock = interviewEls.evaluationReason.closest('.eval-block');
+        if (reasonBlock) reasonBlock.style.display = reason ? 'block' : 'none';
+    }
+    if (interviewEls.referenceAnswer && interviewEls.btnToggleReference) {
+        interviewEls.referenceAnswer.textContent = ref;
+        interviewEls.referenceAnswer.style.display = 'none';
+        interviewEls.btnToggleReference.textContent = '查看参考答案';
+    }
+    if (interviewEls.referenceBlock) interviewEls.referenceBlock.style.display = ref ? 'block' : 'none';
+    if (interviewEls.evaluationDetail) interviewEls.evaluationDetail.style.display = (reason || ref) ? 'block' : 'none';
+
     interviewEls.evaluationTags.innerHTML = (evaluation.tags || []).map(tag =>
         `<span class="evaluation-tag">${escapeHtml(tag)}</span>`
     ).join('');
@@ -1899,13 +2111,18 @@ function showInterviewReport(report, position) {
             const div = document.createElement('div');
             div.className = 'report-score-item';
             div.innerHTML = `
-                <span class="report-score-round">${item.round}</span>
-                <span class="report-score-question">${escapeHtml(item.question || '')}</span>
-                <div class="report-score-tags">${(item.tags || []).map(t => `<span class="report-score-tag">${escapeHtml(t)}</span>`).join('')}</div>
-                <span class="report-score-value">${item.score}</span>
+                <div class="report-score-item-row">
+                    <span class="report-score-round">${item.round}</span>
+                    <span class="report-score-question">${escapeHtml(item.question || '')}</span>
+                    <div class="report-score-tags">${(item.tags || []).map(t => `<span class="report-score-tag">${escapeHtml(t)}</span>`).join('')}</div>
+                    <span class="report-score-value">${item.score}</span>
+                </div>
+                ${buildEvalCollapse('评分原因', item.score_reason)}
+                ${buildEvalCollapse('参考答案', item.reference_answer)}
             `;
             interviewEls.reportScores.appendChild(div);
         });
+        bindEvalCollapse(interviewEls.reportScores);
     }
 
     // 知识分析
@@ -1996,6 +2213,14 @@ initInterview();
 // ============ Review Page Module ============
 
 async function loadReviewData() {
+    // 复习画像按用户隔离：副标题显示当前用户显示名
+    const subtitle = document.getElementById('review-subtitle');
+    if (subtitle) {
+        const displayName = (authState.user && (authState.user.display_name || authState.user.username)) || '';
+        subtitle.textContent = displayName
+            ? `${displayName} 的复习画像：回看面试记录，针对薄弱知识点持续练习`
+            : '回看面试记录，针对薄弱知识点持续练习';
+    }
     await Promise.all([loadToday(), loadStats(), loadHistory()]);
 }
 
@@ -2107,42 +2332,170 @@ function renderHistory(sessions) {
 }
 
 async function showHistoryDetail(sessionId) {
-    try {
-        const res = await fetch(`${API_BASE}/api/interview/report/${encodeURIComponent(sessionId)}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const report = data.report || {};
-        const analysis = report.knowledge_analysis || {};
-        const strengths = (analysis.strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
-        const weaknesses = (analysis.weaknesses || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
-        const suggestions = (report.improvement_suggestions || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+    const detailTitle = `
+        <div class="history-detail-header">
+            <h4>面试详情</h4>
+            <button class="history-detail-close" id="history-detail-close">&times;</button>
+        </div>`;
+    const bindClose = () => {
+        const cb = document.getElementById('history-detail-close');
+        if (cb) cb.addEventListener('click', () => { reviewEls.historyDetail.style.display = 'none'; });
+    };
+    const open = () => { reviewEls.historyDetail.style.display = 'block'; };
 
-        reviewEls.historyDetail.innerHTML = `
-            <div class="history-detail-header">
-                <h4>面试报告</h4>
-                <button class="history-detail-close" id="history-detail-close">&times;</button>
-            </div>
-            <div class="history-detail-score">总分 ${report.total_score ?? '-'} · ${escapeHtml(report.level || '未知')}</div>
-            <div class="history-detail-section">
-                <h5>掌握较好</h5>
-                <ul>${strengths}</ul>
-            </div>
-            <div class="history-detail-section">
-                <h5>需要加强</h5>
-                <ul>${weaknesses}</ul>
-            </div>
-            <div class="history-detail-section">
-                <h5>改进建议</h5>
-                <ul>${suggestions}</ul>
-            </div>
-        `;
-        reviewEls.historyDetail.style.display = 'block';
-        const closeBtn = document.getElementById('history-detail-close');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => { reviewEls.historyDetail.style.display = 'none'; });
-        }
+    let res;
+    try {
+        res = await fetch(`${API_BASE}/api/interview/sessions/${encodeURIComponent(sessionId)}/detail`);
     } catch (e) {
-        showToast('报告加载失败', 'error');
+        reviewEls.historyDetail.innerHTML = `${detailTitle}
+            <div class="history-detail-error">加载失败（${e instanceof TypeError ? '网络错误' : '未知错误'}）</div>`;
+        open();
+        bindClose();
+        return;
+    }
+    if (!res.ok) {
+        const reason = await readErrorDetail(res);
+        reviewEls.historyDetail.innerHTML = `${detailTitle}
+            <div class="history-detail-error">加载失败（HTTP ${res.status}）${reason}</div>`;
+        open();
+        bindClose();
+        return;
+    }
+
+    const data = await res.json();
+    const session = data.session || {};
+    const questions = data.questions || [];
+    const isCompleted = session.status === 'completed';
+    const answeredCount = questions.filter(q => (q.answer || '') !== '').length;
+
+    let meta = `
+        <div class="history-detail-meta">
+            <span class="history-detail-pos">${escapeHtml(session.position || '未命名')}</span>
+            <span class="history-item-status ${isCompleted ? 'done' : 'incomplete'}">${isCompleted ? '已完成' : '进行中'}</span>
+            <span class="history-detail-meta-score">总分 ${session.total_score != null ? session.total_score : '-'}</span>
+        </div>
+        <div class="history-detail-time">开始 ${formatDateTime(session.started_at)}${session.completed_at ? ' · 完成 ' + formatDateTime(session.completed_at) : ''}</div>`;
+    if (!isCompleted) {
+        meta += `<div class="history-detail-notice">该面试未完成</div>`;
+    }
+
+    const questionsHtml = questions.length
+        ? questions.map((q, i) => renderQuestionItem(q, i)).join('')
+        : '<div class="history-detail-empty">暂无题目记录</div>';
+
+    reviewEls.historyDetail.innerHTML = `${detailTitle}
+        ${meta}
+        <div class="history-detail-sub">逐题问答（已作答 ${answeredCount}/${questions.length}）</div>
+        <div class="history-q-list">${questionsHtml}</div>
+        <div id="history-report-block"></div>`;
+    bindEvalCollapse(reviewEls.historyDetail);
+    open();
+    bindClose();
+
+    // 仅已完成会话异步加载汇总报告；进行中会话不请求，避免任何副作用与额外调用
+    if (isCompleted) {
+        loadReportBlock(sessionId);
+    }
+}
+
+function renderQuestionItem(q, idx) {
+    const round = q.round || (idx + 1);
+    const answered = (q.answer || '') !== '';
+    const evalObj = q.evaluation && typeof q.evaluation === 'object' ? q.evaluation : {};
+    const comment = evalObj.comment || '';
+    const tags = Array.isArray(evalObj.tags) ? evalObj.tags : [];
+    const difficulty = ({ easy: '偏易', medium: '适中', hard: '偏难' })[q.difficulty] || q.difficulty || '';
+    const answerHtml = answered
+        ? `<div class="history-q-label">我的回答</div><div class="history-q-answer">${escapeHtml(q.answer)}</div>`
+        : '<div class="history-q-answer unanswered">未作答</div>';
+    const commentHtml = answered && comment
+        ? `<div class="history-q-label">AI 评价</div><div class="history-q-eval">${escapeHtml(comment)}</div>` : '';
+    // 评分原因 / 参考答案（折叠设计；未作答或旧数据缺失字段时自动隐藏）
+    const detailHtml = answered
+        ? buildEvalCollapse('评分原因', evalObj.score_reason) + buildEvalCollapse('参考答案', evalObj.reference_answer)
+        : '';
+    const tagsHtml = tags.length
+        ? `<div class="history-q-tags">${tags.map(t => `<span class="history-q-tag">${escapeHtml(t)}</span>`).join('')}</div>` : '';
+    return `
+        <div class="history-q-item">
+            <div class="history-q-head">
+                <div class="history-q-title">
+                    <span class="history-q-round">第 ${round} 题</span>
+                    ${difficulty ? `<span class="history-q-diff">${escapeHtml(difficulty)}</span>` : ''}
+                </div>
+                <span class="history-q-score">${answered ? (q.score != null ? q.score : 0) + ' 分' : '未作答'}</span>
+            </div>
+            <div class="history-q-question">${escapeHtml(q.question || '')}</div>
+            ${answerHtml}
+            ${commentHtml}
+            ${detailHtml}
+            ${tagsHtml}
+        </div>
+    `;
+}
+
+async function loadReportBlock(sessionId) {
+    const block = document.getElementById('history-report-block');
+    if (!block) return;
+    let res;
+    try {
+        res = await fetch(`${API_BASE}/api/interview/report/${encodeURIComponent(sessionId)}`);
+    } catch (e) {
+        block.innerHTML = '';
+        return;
+    }
+    if (!res.ok) {
+        block.innerHTML = '';
+        return;
+    }
+    const data = await res.json();
+    const report = data.report || {};
+    const analysis = report.knowledge_analysis || {};
+    const strengths = (analysis.strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+    const weaknesses = (analysis.weaknesses || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+    const suggestions = (report.improvement_suggestions || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>暂无数据</li>';
+    const breakdownHtml = (report.score_breakdown || []).map(item => `
+        <div class="history-q-item">
+            <div class="history-q-head">
+                <div class="history-q-title">
+                    <span class="history-q-round">第 ${item.round} 题</span>
+                </div>
+                <span class="history-q-score">${item.score != null ? item.score + ' 分' : ''}</span>
+            </div>
+            <div class="history-q-question">${escapeHtml(item.question || '')}</div>
+            <div class="history-q-tags">${(item.tags || []).map(t => `<span class="history-q-tag">${escapeHtml(t)}</span>`).join('')}</div>
+            ${buildEvalCollapse('评分原因', item.score_reason)}
+            ${buildEvalCollapse('参考答案', item.reference_answer)}
+        </div>
+    `).join('');
+    block.innerHTML = `
+        <div class="history-detail-title">面试报告</div>
+        <div class="history-detail-score">报告总分 ${report.total_score ?? '-'} · ${escapeHtml(report.level || '未知')}</div>
+        ${breakdownHtml ? `<div class="history-detail-sub">逐题评分与解析</div><div class="history-q-list">${breakdownHtml}</div>` : ''}
+        <div class="history-detail-section">
+            <h5>掌握较好</h5>
+            <ul>${strengths}</ul>
+        </div>
+        <div class="history-detail-section">
+            <h5>需要加强</h5>
+            <ul>${weaknesses}</ul>
+        </div>
+        <div class="history-detail-section">
+            <h5>改进建议</h5>
+            <ul>${suggestions}</ul>
+        </div>
+    `;
+    bindEvalCollapse(block);
+}
+
+async function readErrorDetail(res) {
+    try {
+        const d = await res.json();
+        if (!d || !d.detail) return '';
+        const msg = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+        return `：${escapeHtml(msg)}`;
+    } catch (e) {
+        return '';
     }
 }
 
@@ -2397,10 +2750,15 @@ const evalEls = {
     btnGen: document.getElementById('btn-gen-testset'),
     btnRun: document.getElementById('btn-run-eval'),
     result: document.getElementById('eval-result'),
+    progress: document.getElementById('eval-progress'),
+    progressFill: document.getElementById('eval-progress-fill'),
+    progressText: document.getElementById('eval-progress-text'),
 };
 
 if (evalEls.btnGen) {
     evalEls.btnGen.addEventListener('click', async () => {
+        evalEls.btnGen.disabled = true;
+        evalEls.btnGen.textContent = '生成中...';
         showToast('正在生成测试集...', 'info');
         try {
             const res = await fetch('/api/eval/generate-testset', {
@@ -2408,9 +2766,14 @@ if (evalEls.btnGen) {
             const data = await res.json();
             showToast(`测试集生成完成：${data.total} 条`, 'success');
         } catch (e) { showToast('生成失败: ' + e.message, 'error'); }
+        finally {
+            evalEls.btnGen.disabled = false;
+            evalEls.btnGen.textContent = '生成测试集';
+        }
     });
     evalEls.btnRun.addEventListener('click', async () => {
         evalEls.btnRun.disabled = true; evalEls.btnRun.textContent = '评测中...';
+        evalEls.result.style.display = 'none';
         try {
             const res = await fetch('/api/eval/run', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
@@ -2425,11 +2788,46 @@ async function pollEvalJob(jobId) {
     for (let i = 0; i < 600; i++) {  // 最多轮询约 20 分钟
         const res = await fetch(`/api/eval/jobs/${jobId}`);
         const job = await res.json();
-        if (job.status === 'done') { renderEvalResult(job.result); return; }
-        if (job.status === 'error') { showToast('评测失败: ' + (job.error || '未知'), 'error'); return; }
-        await new Promise(r => setTimeout(r, 2000));
+        if (job.status === 'done') {
+            hideEvalProgress();
+            renderEvalResult(job.result);
+            return;
+        }
+        if (job.status === 'error') {
+            hideEvalProgress();
+            showToast('评测失败: ' + (job.error || '未知'), 'error');
+            return;
+        }
+        // 更新进度条 + 阶段日志
+        if (job.progress) {
+            renderEvalProgress(job.progress);
+        }
+        await new Promise(r => setTimeout(r, 1000));
     }
+    hideEvalProgress();
     showToast('评测超时，请稍后重试', 'error');
+}
+
+function renderEvalProgress(p) {
+    if (!evalEls.progress) return;
+    evalEls.progress.style.display = 'flex';
+    const cfg = p.total_configs ? p.current_config : 0;
+    const cfgDesc = p.total_configs ? `策略 ${cfg}/${p.total_configs}：${p.stage || ''}` : '';
+    let text = cfgDesc;
+    if (p.total_items) {
+        // 跨配置累计进度
+        const accumulated = (p.current_config - 1) * (p.total_items / p.total_configs) + p.current_item;
+        const percent = Math.round((p.current_item / (p.total_items / p.total_configs)) * 100);
+        text += `，条目 ${p.current_item}/${p.total_items / p.total_configs}`;
+        evalEls.progressFill.style.width = percent + '%';
+    } else {
+        evalEls.progressFill.style.width = '0%';
+    }
+    evalEls.progressText.textContent = text.trim() || '评测中...';
+}
+
+function hideEvalProgress() {
+    if (evalEls.progress) { evalEls.progress.style.display = 'none'; }
 }
 
 function renderEvalResult(data) {

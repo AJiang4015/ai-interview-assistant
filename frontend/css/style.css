@@ -191,6 +191,7 @@ body {
     padding: 16px 20px;
     border-top: 1px solid var(--border);
     flex: 1;
+    min-height: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -265,6 +266,10 @@ body {
 
 .view.active {
     display: flex;
+}
+
+.settings-view {
+    overflow-y: auto;
 }
 
 /* ============ Chat View ============ */
@@ -1103,6 +1108,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 20px 24px;
+    min-height: 0;
 }
 
 .file-list-header {
@@ -1653,6 +1659,18 @@ body {
     margin-bottom: 14px;
 }
 
+.auth-error {
+    display: block;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: var(--radius-sm);
+    color: var(--error);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    margin-bottom: 14px;
+}
+
 .form-group label {
     display: block;
     font-size: 12px;
@@ -1939,6 +1957,57 @@ body {
     color: var(--text-tertiary);
 }
 
+/* 评价详情：评分原因 + 折叠参考答案 */
+.evaluation-detail {
+    margin-bottom: 12px;
+}
+.eval-block {
+    margin-bottom: 10px;
+}
+.eval-block-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.eval-block-content {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+}
+.eval-collapse-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+.eval-collapse-toggle:hover {
+    background: var(--bg-tertiary);
+}
+.eval-collapse-body {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+}
+
 /* Loading state */
 .interview-loading {
     flex: 1;
@@ -2028,12 +2097,18 @@ body {
 }
 .report-score-item {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     padding: 10px 14px;
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
+}
+.report-score-item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 .report-score-round {
     width: 28px;
@@ -2052,9 +2127,9 @@ body {
     flex: 1;
     font-size: 13px;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.5;
 }
 .report-score-value {
     font-size: 16px;
@@ -2705,6 +2780,151 @@ body {
     font-weight: 700;
     color: var(--accent);
 }
+.history-detail-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+.history-detail-pos {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.history-detail-meta-score {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+}
+.history-detail-time {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 10px;
+}
+.history-detail-notice {
+    font-size: 12px;
+    color: var(--warning, #fbbf24);
+    background: rgba(251, 191, 36, 0.12);
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-bottom: 10px;
+}
+.history-detail-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 4px 0 6px;
+}
+.history-detail-sub {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 12px 0 8px;
+}
+.history-detail-empty {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    padding: 10px 0;
+}
+.history-detail-error {
+    font-size: 13px;
+    color: var(--danger, #f87171);
+    padding: 8px 0;
+}
+.history-q-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+}
+.history-q-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    background: var(--bg-primary);
+}
+.history-q-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.history-q-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.history-q-round {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.history-q-diff {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+}
+.history-q-score {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
+}
+.history-q-question {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 8px;
+}
+.history-q-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    margin: 6px 0 3px;
+}
+.history-q-answer {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+.history-q-answer.unanswered {
+    color: var(--text-tertiary);
+    background: none;
+    padding: 2px 0;
+    font-size: 12px;
+}
+.history-q-eval {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.history-q-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+.history-q-tag {
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(96, 84, 241, 0.1);
+    border-radius: 3px;
+    padding: 2px 8px;
+}
 
 /* ============ Deep Dive ============ */
 .deepdive-mode { width: 100%; max-width: 520px; margin-top: 8px; }
@@ -2713,6 +2933,9 @@ body {
 
 /* ============ RAG Evaluation ============ */
 .eval-card { margin-top: 20px; }
+.eval-guide { margin: 0 0 16px; padding-left: 18px; font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.eval-guide li { margin-bottom: 4px; }
+.eval-progress { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
 .eval-result { margin-top: 14px; overflow-x: auto; }
 .eval-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .eval-table th, .eval-table td { padding: 8px 12px; border: 1px solid var(--border); text-align: center; }
