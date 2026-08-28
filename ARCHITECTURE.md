@@ -153,7 +153,7 @@ docs/                      架构/决策/流程/问题/spec/evaluation（见「�
 | 问答 | `POST /api/query` · `POST /api/query/stream` | RAG 问答 / SSE 流式 |
 | 索引 | `POST /api/index/build` · `GET /api/index/status` | 构建 / 重建 · 状态 |
 | 健康 | `GET /api/health` | FAISS / Embedding / LLM / Redis |
-| 会话 | `POST/GET /api/sessions` · `GET/DELETE /api/sessions/{id}` | 建 / 列 / 取 / 删 / 清空（按用户隔离，DR-010） |
+| 会话 | `POST/GET /api/sessions` · `GET/DELETE /api/sessions/{id}` · `DELETE /api/sessions` | 建 / 列 / 取 / 删 / 清空当前用户全部（按用户隔离，DR-010） |
 | 文件 | `GET /api/files` · `POST /api/files/upload` · `DELETE /api/files/{filename}` | 知识库管理 |
 | 搜索 | `GET /api/search?q=` | 跨会话历史全文搜索+高亮（按用户） |
 | 认证 | `POST /api/auth/register` `login` · `GET /api/auth/me` | 注册 / 登录 / JWT |

@@ -60,7 +60,7 @@
   - 越权统一 404（不暴露存在性）；`DELETE /api/sessions` 语义改为"清空当前用户"；
   - 兼容：存量无 `username` 行标记 legacy 不可见、不迁移；SQLite 异常走 Redis-only 降级（遵循 DR-001）。
 - **Reason**：既要短期多轮上下文（LLM prompt）又要跨 TTL/重启的长期可回看，遂以"DB 分离 + 恢复回填"覆盖两种时效；逐层透传 username 避免存储做身份判断。
-- **Consequence**：RAGService 的 7 个会话方法签名透传 `username`；`api` 层承担归属校验；`enable_history_persistence` 开关控制该特性；缓存 key 铁律（DR-004）仍不混入 username。
+- **Consequence**：RAGService 的 7 个会话方法签名透传 `username`（`query` / `stream_query` / `create_session` / `get_session_history` / `delete_session` / `list_sessions` / `clear_user_sessions`，见 `app/services/rag_service.py`）；`api` 层承担归属校验；`enable_history_persistence` 开关控制该特性；缓存 key 铁律（DR-004）仍不混入 username；`DELETE /api/sessions`（清空当前用户全部会话）已实现于 `app/api/routes.py:234`。
 
 ### DR-002 / DR-003 / DR-004 的连带约束
 
