@@ -1,15 +1,20 @@
 # 检索质量评测闭环：基线→门禁→消融→面试检索升级（Design Spec）
 
-> 状态：待确认（方向已对齐，未进入实现）
+> 状态：已拆分（本文件保留备用；后续执行以下述两个拆分件为准）
 > 日期：2026-08-28
+> 拆分产物：
+> - [Part A：检索评测闭环](2026-08-28-retrieval-eval-closed-loop-partA.md)（建集 → 基线+门禁 → 消融优化）
+> - [Part B：面试检索升级](2026-08-28-interview-retrieval-upgrade-partB.md)（统一 facade + 知识点树 query）
+>
+> 注：本文件原名为 `2026-08-28-retrieval-eval-loop-design.md`，2026-08-28 重命名为 `-closed-loop-design.md` 以对齐命名族。
 
 ## 1. 问题描述
 
 项目现状是「RAG 知识库搜索 + AI 模拟面试助手」。经与用户结构性拷问（grill-me）后收敛出以下判断：
 
 1. **北极星错配**：代码里已重投入 JWT 认证、用户隔离、离线评估、OTel 可观测性（产品化/多租户的信号），但实际定位是**单用户自用为主、最终面向求职作品集展示**。多租户/并发是过度投入，应降级为「能跑就行」的支撑。
-2. **核心卖点未立住**：产品差异化在于「面试与知识库联动」，但现状 `interview_service.py::_retrieve_context()`（[L637-L659](file:///e:/CodeField/RAGKonwLedge/app/services/interview_service.py#L637-L659)）只用 raw FAISS 稠密检索取 top-3，**没有 hybrid / rerank / query rewrite**；且出题时的检索词是 `f"{position} 技术面试题 {difficulty}"` 这类「不是问题的问题」。联动只是形式上连通，质量上裸奔。
-3. **最弱一环 = 检索质量、无闭环**：检索管线全开关常开（`query_rewrite / hybrid_search / rerank / parent_expansion` 均为 True，见 [config.py](file:///e:/CodeField/RAGKonwLedge/app/config.py#L45-L52)），从未做过消融/对照实验，改检索全凭玄学。离线评估模块（`evaluation_service.py` / `eval_testset.py`）虽已存在且挂好 `/api/eval/*` 路由，但**没有门禁、没有可重复命令、没反过来驱动过检索改动**，是「存在但没用」的摆设。
+2. **核心卖点未立住**：产品差异化在于「面试与知识库联动」，但现状 `interview_service.py::_retrieve_context()`（L637-L659）只用 raw FAISS 稠密检索取 top-3，**没有 hybrid / rerank / query rewrite**；且出题时的检索词是 `f"{position} 技术面试题 {difficulty}"` 这类「不是问题的问题」。联动只是形式上连通，质量上裸奔。
+3. **最弱一环 = 检索质量、无闭环**：检索管线全开关常开（`query_rewrite / hybrid_search / rerank / parent_expansion` 均为 True，见 `app/config.py` L45-L52），从未做过消融/对照实验，改检索全凭玄学。离线评估模块（`evaluation_service.py` / `eval_testset.py`）虽已存在且挂好 `/api/eval/*` 路由，但**没有门禁、没有可重复命令、没反过来驱动过检索改动**，是「存在但没用」的摆设。
 4. **无真实翻车案例**：用户手里没有可用的失败样例，检索诊断无法靠人工案例定位，只能靠「评测集跑基线 → 量化 → 消融」，因此**评测集的质量 = 诊断引擎的质量**。
 
 ## 2. 目标（非目标）
@@ -49,7 +54,6 @@
 ### 4.2 指标与门禁
 - **门禁（客观、可自动化）**：`recall@k`、`mrr`——先跑基线，门禁 = 基线数字 + 可量化提升目标（如基线 recall@3=0.55 → 目标 0.75），**不凭空拍阈值**。
 - **辅助（生成层）**：`faithfulness` / `answer_relevance` / `context_relevance` 用 LLM-judge，只做辅助 + 人工抽样；不设自动化门禁（judge 稳定性未校准前不作为硬门禁）。
-- 抽象：测试集不变的前提下，指标数字可反复复现对比。
 
 ### 4.3 消融实验（一次只动一个开关）
 - 从最可疑 + 最贵的开始：**query rewrite → rerank**，随后 parent expansion → hybrid 的 RRF 权重。
@@ -87,7 +91,7 @@
 **回归与铁律**
 - [ ] 全管线全开关状态下整体 recall/mrr 不低于优化前基线
 - [ ] `python -m pytest tests/` 全部通过
-- [ ] 未违反 P001（缓存 key 不含 session/轮次）、P002（流式会话）、P003/P004（重排走 SiliconFlow）铁律
+- [ ] 未违反 DECISIONS.md 中 DR-001~DR-010 对应铁律（核心：DR-004 缓存 key 基于原始问题不含 session/轮次；DR-003 重排走 SiliconFlow API；DR-001 管线开关+优雅降级）
 
 ## 6. 风险与未知点（需确认）
 
