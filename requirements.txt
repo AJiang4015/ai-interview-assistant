@@ -15,3 +15,5 @@ bcrypt==3.2.2
 pyjwt==2.9.0
 rank_bm25==0.2.2
 python-multipart==0.0.32
+pytest==8.3.4
+pytest-asyncio==0.24.0

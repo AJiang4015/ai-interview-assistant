@@ -1,14 +1,17 @@
+from app.config import settings
 from app.services import monitor, session_cost
+
+MODEL = next(iter(settings.token_price))  # 取配置中真实存在的模型名，避免硬编码
 
 def test_emit_cost_updates_internal_counters():
     before = monitor._total_cost
-    monitor.emit_cost("qwen3.7-max", in_n=1000, out_n=500, session_id="s1")
+    monitor.emit_cost(MODEL, in_n=1000, out_n=500, session_id="s1")
     assert monitor._total_cost > before
 
 
 def test_emit_cost_adds_session_cost():
     session_cost.reset()
-    monitor.emit_cost("qwen3.7-max", in_n=1000, out_n=500, session_id="s-test")
+    monitor.emit_cost(MODEL, in_n=1000, out_n=500, session_id="s-test")
     assert session_cost.total("s-test") > 0
 
 

@@ -1,11 +1,17 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.config import settings
 from app.services.llm_client import LLMClient
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _model():
+    """实际模型名从配置读取，避免硬编码造成测试与 .env 不一致。"""
+    return settings.bailian_model
 
 
 def _build_usage_response(fake_resp):
@@ -36,7 +42,7 @@ def test_chat_records_usage_and_returns_answer():
 
     assert result == "answer"
     emit.assert_called_once_with(
-        "qwen3.7-max",
+        _model(),
         in_n=100,
         out_n=50,
         session_id="unknown",
@@ -53,7 +59,7 @@ def test_chat_without_usage_defaults_to_zero():
 
     assert result == "answer"
     emit.assert_called_once_with(
-        "qwen3.7-max",
+        _model(),
         in_n=0,
         out_n=0,
         session_id="unknown",
@@ -77,7 +83,7 @@ def test_chat_passes_session_id():
 
     assert result == "answer"
     emit.assert_called_once_with(
-        "qwen3.7-max",
+        _model(),
         in_n=100,
         out_n=50,
         session_id="s-x",
@@ -129,7 +135,7 @@ def test_chat_stream_usage_takes_last_nonempty():
 
     assert chunks == ["hi"]
     emit.assert_called_once_with(
-        "qwen3.7-max",
+        _model(),
         in_n=100,
         out_n=50,
         session_id="unknown",
