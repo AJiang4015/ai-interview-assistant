@@ -5,7 +5,9 @@ import asyncio
 import time
 from pathlib import Path
 
-from app.services.eval_metrics import hit_rate, recall_at_k, mrr
+from app.services.eval_metrics import (
+    recall_at_k, mrr, parse_expected_sources, multi_source_hit,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,14 +64,41 @@ def _aggregate_retrieval(metrics: list[dict]) -> dict:
     }
 
 
+def _aggregate_breakdown(metrics: list[dict]) -> dict:
+    """按 question_type(a/b/c/d) 分维度聚合 recall@3 / recall@5 / mrr（Spec A §4.2）。"""
+    total = {"recall@3": 0.0, "recall@5": 0.0, "mrr": 0.0}
+    by_dim: dict[str, list[dict]] = {}
+    for m in metrics:
+        qt = m["question_type"]
+        by_dim.setdefault(qt, []).append(m)
+        total["recall@3"] += m["recall@3"]
+        total["recall@5"] += m["recall@5"]
+        total["mrr"] += m["mrr"]
+    n = max(len(metrics), 1)
+    overall = {k: round(v / n, 4) for k, v in total.items()}
+    overall["samples"] = len(metrics)
+    dims = {}
+    for qt, ms in by_dim.items():
+        k2 = len(ms)
+        dims[qt] = {
+            "samples": k2,
+            "recall@3": round(sum(x["recall@3"] for x in ms) / max(k2, 1), 4),
+            "recall@5": round(sum(x["recall@5"] for x in ms) / max(k2, 1), 4),
+            "mrr": round(sum(x["mrr"] for x in ms) / max(k2, 1), 4),
+        }
+    return {"overall": overall, "by_dimension": dims}
+
+
 class EvaluationService:
     def __init__(self, llm, embedding, faiss, hybrid_retriever, reranker,
-                 testset_path: str = "data/eval_testset.json", top_k: int = 5):
+                 testset_path: str = "data/eval_testset.json", top_k: int = 5,
+                 query_rewriter=None):
         self.llm = llm
         self.embedding = embedding
         self.faiss = faiss
         self.hybrid = hybrid_retriever
         self.reranker = reranker
+        self.query_rewriter = query_rewriter
         self.testset_path = Path(testset_path)
         self.top_k = top_k
         self._jobs: dict[str, dict] = {}
@@ -100,8 +129,16 @@ class EvaluationService:
         except Exception as e:
             self._jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
 
-    async def _retrieve(self, query: str, use_hybrid: bool, use_rerank: bool) -> list[dict]:
+    async def _retrieve(self, query: str, use_hybrid: bool, use_rerank: bool,
+                        use_query_rewrite: bool = False) -> list[dict]:
         """按配置检索，返回按相关性排序的 chunk 列表：[{content, source_file}]。"""
+        if use_query_rewrite and self.query_rewriter and self.query_rewriter.enabled:
+            try:
+                rewritten = await self.query_rewriter.rewrite(query)
+                if rewritten and rewritten.strip():
+                    query = rewritten.strip()
+            except Exception as e:
+                logger.warning(f"Eval query rewrite failed, using original: {e}")
         if use_hybrid and self.hybrid and self.hybrid.enabled:
             try:
                 results = await self.hybrid.retrieve(query, top_k=20)
@@ -169,13 +206,22 @@ class EvaluationService:
             gen_f = gen_r = gen_c = 0.0
             gen_n = 0
             for item in testset:
-                chunks = await self._retrieve(item["question"], cfg["use_hybrid"], cfg["use_rerank"])
+                chunks = await self._retrieve(item["question"], cfg["use_hybrid"], cfg["use_rerank"],
+                                              cfg.get("use_query_rewrite", False))
                 ranked = [c["source_file"] for c in chunks]
-                expected = {item["expected_source"]}
+                # 多源 recall 语义（Spec A）：
+                # - expected_source 为列表（跨文档题）时，主文档（首元素）必须出现在
+                #   top-k，且至少一个副文档也出现，hit 才记 1.0；recall 按全部期望
+                #   来源的命中比例计算；mrr 以主文档的排名为准。
+                # - expected_source 为字符串（单源题）时，三种指标均退化为原有逻辑。
+                primary, expected = parse_expected_sources(item["expected_source"])
                 retrieval_metrics.append({
-                    "hit": hit_rate(ranked, expected, self.top_k),
+                    "hit": multi_source_hit(ranked, item["expected_source"], self.top_k),
                     "recall": recall_at_k(ranked, expected, self.top_k),
-                    "mrr": mrr(ranked, expected, self.top_k),
+                    "recall@3": recall_at_k(ranked, expected, 3),
+                    "recall@5": recall_at_k(ranked, expected, 5),
+                    "mrr": mrr(ranked, {primary}, self.top_k),
+                    "question_type": item.get("question_type", ""),
                 })
                 context = self._context_text(chunks)
                 answer = await self._generate_answer(item["question"], context)
@@ -189,6 +235,7 @@ class EvaluationService:
             report["configs"].append({
                 "name": cfg["name"],
                 "retrieval": _aggregate_retrieval(retrieval_metrics),
+                "retrieval_breakdown": _aggregate_breakdown(retrieval_metrics),
                 "generation": {
                     "faithfulness": round(gen_f / max(gen_n, 1), 4),
                     "answer_relevance": round(gen_r / max(gen_n, 1), 4),
