@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # ===== 面试/复习画像 =====
     # 今日一题在用户无历史数据、也无此前面试岗位记录时回退的全局默认岗位
     default_interview_position: str = "Java后端"
+    # 面试追问环节（最多 5 层）默认不触发真实检索，仅用会话内已检索上下文；
+    # 置 True 时追问层也走真实检索（供实验对比，受成本约束）。见 Part B spec §5.2
+    enable_interview_followup_retrieval: bool = False
     # 存量旧面试数据的归属账号：启动时把 username='' 的场次认领到该账号；
     # 留空表示旧数据不被任何用户认领（对任何登录用户访问均返回 403）
     legacy_data_owner: str = ""

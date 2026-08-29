@@ -200,6 +200,7 @@ async def lifespan(app: FastAPI):
         interview_store, llm_client, faiss_store, embedding_service,
         resume_parser=resume_parser,
         topic_tracker=topic_tracker,
+        facade=retrieval_facade,
     )
 
     global deep_dive_service

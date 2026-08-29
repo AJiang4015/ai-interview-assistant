@@ -17,6 +17,7 @@ from app.storage.faiss_store import FaissStore
 from app.services.embedding import EmbeddingService
 from app.storage.interview_store import InterviewStore
 from app.services.topic_tracker import TopicTracker
+from app.services.retrieval_facade import RetrievalFacade
 from app.utils.logger import get_logger
 from app.config import settings
 from app.exceptions import AuthorizationError
@@ -161,6 +162,7 @@ class InterviewService:
         embedding: Optional[EmbeddingService] = None,
         resume_parser: Optional[ResumeParser] = None,
         topic_tracker: Optional[TopicTracker] = None,
+        facade: Optional[RetrievalFacade] = None,
     ):
         self.store = store
         self.llm = llm
@@ -168,6 +170,8 @@ class InterviewService:
         self.embedding = embedding
         self.resume_parser = resume_parser
         self.topic_tracker = topic_tracker
+        self.facade = facade
+        self.followup_retrieval = settings.enable_interview_followup_retrieval
         self.max_rounds = 15
         self.min_rounds = 5
         self.planner = InterviewPlanner()
@@ -271,8 +275,11 @@ class InterviewService:
         # 用户隔离：校验当前登录用户拥有该场次
         self._authorize(session_id, username)
 
-        # Evaluate the answer
-        kb_context = await self._retrieve_context(question["question"] + " " + answer)
+        # Evaluate the answer —— 评价 query 保持「问题 + 用户回答」拼接（Part B §5.3），
+        # 统一走 facade 检索并带回来源用于溯源
+        kb_context, kb_sources = await self._retrieve_context_with_sources(
+            question["question"] + " " + answer
+        )
         eval_prompt = EVALUATE_PROMPT.format(
             question=question["question"],
             difficulty=question["difficulty"],
@@ -295,6 +302,8 @@ class InterviewService:
             evaluation = {"score": 5, "comment": "", "score_reason": "", "reference_answer": "", "tags": [], "next_difficulty": "medium", "should_end": False}
         evaluation.setdefault("score_reason", "")
         evaluation.setdefault("reference_answer", "")
+        # 溯源（Part B §5.5）：评价所用检索来源（文档名 + chunk 定位），随评价入库供报告回查
+        evaluation.setdefault("sources", kb_sources)
 
         score = evaluation.get("score", 5)
         self.store.update_answer(question_id, answer, evaluation, score)
@@ -336,6 +345,7 @@ class InterviewService:
         next_q = await self._generate_question(
             session_id, session["position"], next_round, next_difficulty, question["answer"], evaluation,
             match_analysis=None, resume_analysis=None, jd_analysis=None,
+            followup=True,
         )
 
         return {
@@ -530,8 +540,13 @@ class InterviewService:
         match_analysis: Optional[dict] = None,
         resume_analysis: Optional[dict] = None,
         jd_analysis: Optional[dict] = None,
+        followup: bool = False,
     ) -> dict:
-        """Generate a question for the interview."""
+        """Generate a question for the interview.
+
+        followup=True 表示这是基于上一题回答的「追问式下一题」。按 Part B §5.2，
+        追问环节默认不触发真实检索（enable_interview_followup_retrieval=False）。
+        """
         # Get context from previous questions
         questions = self.store.get_questions(session_id)
         history_count = len(questions)
@@ -540,8 +555,12 @@ class InterviewService:
         if last_evaluation:
             last_eval_summary = f"得分：{last_evaluation.get('score', '?')}，评语：{last_evaluation.get('comment', '')[:50]}"
 
-        # Retrieve knowledge base context
-        kb_context = await self._retrieve_context(f"{position} 技术面试题 {difficulty}")
+        # 追问默认不检索（Part B §5.2）；出题 / 开启开关时才走真实检索
+        kb_context, kb_q_sources = "", []
+        if not (followup and not self.followup_retrieval):
+            kb_context, kb_q_sources = await self._retrieve_context_with_sources(
+                f"{position} 技术面试题 {difficulty}"
+            )
 
         # Build personalized context if match analysis is available
         personalized_context = ""
@@ -632,32 +651,58 @@ class InterviewService:
             "knowledge_tags": knowledge_tags,
             "topic": q_topic,
             "category": q_category,
+            "sources": kb_q_sources,  # 溯源（Part B §5.5）：出题所用检索来源
         }
 
     async def _retrieve_context(self, query: str) -> str:
-        """Retrieve knowledge base context for a query."""
-        if not self.faiss or not self.faiss.is_loaded() or not self.embedding:
-            return ""
+        """Retrieve knowledge base context for a query (老签名，只返回文本)。"""
+        text, _ = await self._retrieve_context_with_sources(query)
+        return text
 
+    async def _retrieve_context_with_sources(self, query: str) -> tuple[str, list]:
+        """统一检索上下文 + 来源（Part B S3）。
+
+        优先走 RetrievalFacade（hybrid + rerank 已验证管线），facade 不可用或索引缺失时
+        降级到旧 raw FAISS 链路（DR-001：检索失败不得阻塞面试主线）。返回 (context_text, sources)。
+        """
+        # 1) 优先 facade
+        if self.facade is not None:
+            try:
+                result = await self.facade.retrieve(query, top_k=5)
+                if not result.is_empty:
+                    text = f"以下是从知识库检索到的参考资料：\n" + result.to_text()
+                    sources = [
+                        {"file": s.file, "chunk_index": s.chunk_index, "score": s.score}
+                        for s in result.sources
+                    ]
+                    return text, sources
+            except Exception as e:
+                logger.warning(f"Facade retrieval failed, fallback to raw faiss: {e}")
+
+        # 2) 降级：旧 raw FAISS 逻辑（行为保持升级前一致）
+        if not self.faiss or not self.faiss.is_loaded() or not self.embedding:
+            return "", []
         try:
             query_vector = await self.embedding.encode([query])
             if query_vector.size == 0:
-                return ""
+                return "", []
             results = self.faiss.search(query_vector[0], 3)
             if not results:
-                return ""
-            # Deduplicate
+                return "", []
             seen = set()
             chunks = []
+            sources = []
             for r in results:
                 if r.content not in seen:
                     seen.add(r.content)
                     chunks.append(r.content)
+                    sources.append({"file": r.source_file, "chunk_index": r.chunk_index, "score": r.score})
             if chunks:
-                return f"以下是从知识库检索到的参考资料：\n" + "\n---\n".join(chunks)
+                text = f"以下是从知识库检索到的参考资料：\n" + "\n---\n".join(chunks)
+                return text, sources
         except Exception as e:
             logger.warning(f"Knowledge retrieval failed: {e}")
-        return ""
+        return "", []
 
     async def _generate_report(self, session_id: str) -> dict:
         """Generate an interview report from all questions and answers."""
