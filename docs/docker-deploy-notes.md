@@ -300,4 +300,29 @@ docker exec -it <容器名> bash  # 进入容器内部
 
 ---
 
+## 10. 环境注意事项（本机 / 部署环境必读）
+
+> 下面两类现象**不是代码 bug，而是环境配置问题**。踩到时先按本节约束检查环境，勿直接改代码或走问题修复流程。
+
+### 10.1 Redis 启用密码时 —— 必须配置 `REDIS_PASSWORD`
+
+- **现象**：应用启动卡在 lifespan 的 `Initializing services...`，迟迟不进监听；或健康检查 / 会话异常。
+- **原因**：`app/config.py` 的 `redis_password` 默认为空字符串。若 Redis 以 `--requirepass <密码>` 启动，应用用空密码连接会被 AUTH 拒绝、在生命周期初始化处阻塞。
+- **处置**：
+  - 本机直跑：启动前 `$env:REDIS_PASSWORD='<密码>'`（或写入 `.env` 的 `REDIS_PASSWORD`）。
+  - compose 部署：在 rag-app 的 `environment` / `.env` 注入 `REDIS_PASSWORD`。
+  - 若 Redis 无密码，保持留空即可。
+
+### 10.2 Python 依赖必须严格按 `requirements.txt` 安装 —— 避免 bcrypt/passlib 版本漂移
+
+- **现象**：`POST /api/auth/register` 返回 400，detail 为误导性的 `password cannot be longer than 72 bytes`。
+- **原因**：环境里 `bcrypt` 被升到 5.x，而 `requirements.txt` 锁定 `bcrypt==3.2.2`。`bcrypt 5.x` 移除了 `passlib 1.7.4` 依赖的 `__about__` 属性，导致认证后端初始化失败并报出误导性错误。
+- **处置**：统一用 `pip install -r requirements.txt`（会装回 3.2.2）；已在漂移的旧环境执行 `pip install "bcrypt==3.2.2"`。不要在有现成环境上盲装新版 bcrypt。
+
+### 10.3 配置 / 环境变量修改后需重启进程
+
+`Settings()` 在 import 时一次性读取；改 `.env` / `config.py` / 新增环境变量后，需重启 uvicorn 或重建容器才生效（D12）。
+
+---
+
 > 建议：本文件为「部署 & 排障」知识沉淀，配合项目根 `AGENTS.md`（工程约定）与 `PROBLEM.md`（问题知识库）一并阅读。
