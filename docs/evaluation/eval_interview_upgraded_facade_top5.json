@@ -1,0 +1,301 @@
+{
+  "purpose": "Part B S3 面试检索升级后复试（统一 facade hybrid+rerank）",
+  "config": {
+    "backend": "retrieval_facade",
+    "top_k": 5,
+    "qr_enabled": true,
+    "rerank_enabled": true
+  },
+  "baseline_ref": {
+    "recall@3": 0.588,
+    "mrr": 0.559,
+    "note": "S2 升级前 raw FAISS top-3"
+  },
+  "overall": {
+    "n": 17,
+    "recall@3": 0.5882,
+    "mrr": 0.5882
+  },
+  "by_sample_type": {
+    "出题形态": {
+      "n": 8,
+      "recall@3": 0.625,
+      "mrr": 0.625
+    },
+    "评价形态": {
+      "n": 9,
+      "recall@3": 0.5556,
+      "mrr": 0.5556
+    }
+  },
+  "rows": [
+    {
+      "query": "说说 JUC 包里的同步工具，ConcurrentHashMap 是怎么做到线程安全的？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "JUC.md"
+      ],
+      "top_k_hits": [
+        "test_java.md",
+        "test_java.md",
+        "操作系统.md",
+        "Redis.md",
+        "test_java.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "面试官视角：ArrayList 和 LinkedList 在底层存储和增删查上的差异是什么？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "JAVA集合.md"
+      ],
+      "top_k_hits": [
+        "Redis.docx",
+        "test_java.md",
+        "操作系统.md",
+        "Redis.md",
+        "Redis.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "请讲一下 JVM 内存模型，堆和方法区分别存什么？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "JVM内存模型.pdf"
+      ],
+      "top_k_hits": [
+        "JVM内存模型.pdf",
+        "操作系统.md",
+        "Java基础.md",
+        "操作系统.md",
+        "Redis.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "MySQL 的索引底层为什么用 B+ 树而不是二叉树？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "MySQL.md"
+      ],
+      "top_k_hits": [
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "Java 里线程池的七个核心参数分别是什么，怎么影响任务执行？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "JUC.md"
+      ],
+      "top_k_hits": [
+        "MySQL.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "讲一下 Spring 的 IoC 和 AOP，以及它们解决什么问题。",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "Spring.md"
+      ],
+      "top_k_hits": [
+        "Spring.md",
+        "Spring.md",
+        "Spring.md",
+        "Spring.md",
+        "Spring.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "Redis 是单线程为什么快？它用了哪些数据结构？",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "Redis.md"
+      ],
+      "top_k_hits": [
+        "Redis.md",
+        "Redis.docx",
+        "Redis.md",
+        "Redis.md",
+        "Redis.docx"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "介绍一下计算机网络里的 TCP 三次握手和四次挥手。",
+      "sample_type": "出题形态",
+      "expected_source": [
+        "计算机网络.md"
+      ],
+      "top_k_hits": [
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "为什么 HashMap 的长度要设计成 2 的幂次方？回答：这样 hash 后定位桶索引时用（n-1）& hash 位运算代替取模，且配合扩容 rehash 高",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "JAVA集合.md"
+      ],
+      "top_k_hits": [
+        "test_java.md",
+        "Redis.md",
+        "Redis.md",
+        "MySQL.md",
+        "Redis.docx"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "synchronized 在 JDK6 之后做了哪些优化？回答：引入了偏向锁、轻量级锁，并且锁可以升级，还引入了自旋、锁消除和锁粗化。请评估这个回答缺失了哪个关",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "JUC.md"
+      ],
+      "top_k_hits": [
+        "操作系统.md",
+        "MySQL.md",
+        "MySQL.md",
+        "Java基础.md",
+        "MySQL.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "请用一句话解释下 volatile 的可见性。回答：volatile 保证了多线程之间的可见性和有序性，禁止指令重排，但不保证原子性。请问这个回答在什么场景下会",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "JUC.md"
+      ],
+      "top_k_hits": [
+        "Java基础.md",
+        "Redis.md",
+        "操作系统.md",
+        "Redis.md",
+        "MySQL.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    },
+    {
+      "query": "说说 MySQL 事务的隔离级别。回答：有读未提交、读已提交、可重复读、串行化四档，MySQL 默认是可重复读，靠 MVCC 解决幻读。请指出该回答对'可重复读",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "MySQL.md"
+      ],
+      "top_k_hits": [
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md",
+        "MySQL.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "Spring 默认是单例还是多例？回答：Spring 默认是单例。请问这些 Bean 在多线程访问下是否安全，需要怎么注意？",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "Spring.md"
+      ],
+      "top_k_hits": [
+        "Spring.md",
+        "Spring.md",
+        "Spring.md",
+        "Spring.md",
+        "Spring.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "Redis 的过期删除策略有哪些？回答：惰性删除和定期删除结合。请说明为什么不能只用定时删除，什么场景需要 RDB/AOF 持久化来配合。",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "Redis.md"
+      ],
+      "top_k_hits": [
+        "Redis.md",
+        "Redis.md",
+        "Redis.docx",
+        "Redis.md",
+        "Redis.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "JVM 的类加载过程是怎样的？回答：加载、验证、准备、解析、初始化，并且默认使用双亲委派机制。请补充该回答缺少的一个阶段或关键机制。",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "JVM内存模型.pdf"
+      ],
+      "top_k_hits": [
+        "JVM内存模型.pdf",
+        "Java基础.md",
+        "操作系统.md",
+        "Java基础.md",
+        "Java基础.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "讲一下 TCP 拥塞控制。回答：通过慢启动、拥塞避免、快重传、快恢复四个算法来避免网络拥塞，其中慢启动是每轮窗口翻倍。请问这个回答是否准确，还缺什么？",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "计算机网络.md"
+      ],
+      "top_k_hits": [
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md",
+        "计算机网络.md"
+      ],
+      "hit": true,
+      "mrr": 1.0
+    },
+    {
+      "query": "HashMap 是线程安全的吗？回答：不是，多线程并发 put 会导致数据丢失，甚至在高版本中触发死循环。请判断这个说法是否正确并说明原因。",
+      "sample_type": "评价形态",
+      "expected_source": [
+        "JAVA集合.md"
+      ],
+      "top_k_hits": [
+        "test_java.md",
+        "test_java.md",
+        "操作系统.md",
+        "Redis.md",
+        "Redis.md"
+      ],
+      "hit": false,
+      "mrr": 0.0
+    }
+  ]
+}
