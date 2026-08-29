@@ -25,9 +25,10 @@ class ResponseCache:
     def available(self) -> bool:
         return self._store is not None and self._store.is_connected
 
-    def make_key(self, question: str, session_id: str, msg_count: int) -> str:
-        raw = f"{question}|{session_id}|{msg_count}"
-        h = hashlib.md5(raw.encode("utf-8")).hexdigest()
+    def make_key(self, question: str, _session_id: str = "", _msg_count: int = 0) -> str:
+        # DR-004 / P001：缓存 key 只基于原始问题原文。
+        # session_id / msg_count 等可变维度一律不参与，使相同问题可跨会话、跨轮次命中。
+        h = hashlib.md5(question.encode("utf-8")).hexdigest()
         return f"{self._prefix}{h}"
 
     async def get(self, key: str) -> Optional[dict]:
