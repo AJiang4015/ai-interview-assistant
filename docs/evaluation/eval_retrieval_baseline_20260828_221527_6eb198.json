@@ -1,0 +1,36 @@
+{
+  "timestamp": "20260828_221443",
+  "configs": [
+    {
+      "name": "hybrid_rerank",
+      "retrieval": {
+        "hit_rate": 0.6667,
+        "recall": 0.8333,
+        "mrr": 0.5556,
+        "samples": 3
+      },
+      "retrieval_breakdown": {
+        "overall": {
+          "recall@3": 0.8333,
+          "recall@5": 0.8333,
+          "mrr": 0.5556,
+          "samples": 3
+        },
+        "by_dimension": {
+          "a": {
+            "samples": 3,
+            "recall@3": 0.8333,
+            "recall@5": 0.8333,
+            "mrr": 0.5556
+          }
+        }
+      },
+      "generation": {
+        "faithfulness": 0.9667,
+        "answer_relevance": 1.0,
+        "context_relevance": 0.9
+      }
+    }
+  ],
+  "total_questions": 3
+}

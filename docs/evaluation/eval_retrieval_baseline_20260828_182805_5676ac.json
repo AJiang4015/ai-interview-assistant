@@ -1,0 +1,48 @@
+{
+  "timestamp": "20260828_182156",
+  "configs": [
+    {
+      "name": "hybrid_rerank",
+      "retrieval": {
+        "hit_rate": 0.0,
+        "recall": 0.5,
+        "mrr": 1.0,
+        "samples": 1
+      },
+      "generation": {
+        "faithfulness": 0.0,
+        "answer_relevance": 0.0,
+        "context_relevance": 0.9
+      }
+    },
+    {
+      "name": "dense_only",
+      "retrieval": {
+        "hit_rate": 0.0,
+        "recall": 0.5,
+        "mrr": 1.0,
+        "samples": 1
+      },
+      "generation": {
+        "faithfulness": 0.0,
+        "answer_relevance": 0.0,
+        "context_relevance": 0.8
+      }
+    },
+    {
+      "name": "no_rerank",
+      "retrieval": {
+        "hit_rate": 0.0,
+        "recall": 0.5,
+        "mrr": 1.0,
+        "samples": 1
+      },
+      "generation": {
+        "faithfulness": 0.0,
+        "answer_relevance": 0.0,
+        "context_relevance": 0.9
+      }
+    }
+  ],
+  "total_questions": 1
+}
