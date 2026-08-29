@@ -1,0 +1,121 @@
+[
+  {
+    "query": "说说 JUC 包里的同步工具，ConcurrentHashMap 是怎么做到线程安全的？",
+    "expected_answer": "JUC 是 java.util.concurrent 包。ConcurrentHashMap 线程安全：JDK1.8 起用 CAS + synchronized 锁住单个桶（Node 数组头节点），放弃分段锁；读无锁配合 volatile；扩容协助 transfer。相比 HashTable 全表锁、Collections.synchronizedMap 粒度更细，并发度更高。",
+    "expected_source": "JUC.md",
+    "source_file": "JUC.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "面试官视角：ArrayList 和 LinkedList 在底层存储和增删查上的差异是什么？",
+    "expected_answer": "ArrayList 底层是动态 Object 数组，随机访问 O(1)、尾部增删 O(1)（扩容翻倍）、中间插入 O(n) 需移动元素；LinkedList 底层是双向链表，头部/中间插入删除 O(1)（需定位）相对快，但随机访问 O(n)。并发下两者都是非线程安全的。",
+    "expected_source": "JAVA集合.md",
+    "source_file": "JAVA集合.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "请讲一下 JVM 内存模型，堆和方法区分别存什么？",
+    "expected_answer": "JVM 运行时数据区：程序计数器、虚拟机栈（栈帧：局部变量表、操作数栈等）、本地方法栈、堆（对象实例、数组，GC 主战场，分新生代/老年代）、方法区（类信息、常量、静态变量，JDK8 由元空间 Metaspace 实现）。字符串常量池在独立位置。",
+    "expected_source": "JVM内存模型.pdf",
+    "source_file": "JVM内存模型.pdf",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "MySQL 的索引底层为什么用 B+ 树而不是二叉树？",
+    "expected_answer": "B+ 树：多路、矮胖，一次磁盘 IO 能读更多关键字，树高约 3~4 层，叶子节点存数据且用链表串起来方便范围扫描；二叉树/红黑树太高、层级深 IO 次数多；Hash 索引不支持范围查询与排序。InnoDB 主键索引叶子存整行（聚簇），二级索引存主键。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "Java 里线程池的七个核心参数分别是什么，怎么影响任务执行？",
+    "expected_answer": "核心参数：核心线程数 corePoolSize、最大线程数 maximumPoolSize、空闲存活时间 keepAliveTime、时间单位 unit、阻塞队列 workQueue、线程工厂 threadFactory、拒绝策略 handler。提交任务：核心线程满→入队→队列满→扩到最大→仍满→拒绝策略（Abort/CallerRuns/Discard/DiscardOldest）。",
+    "expected_source": "JUC.md",
+    "source_file": "JUC.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "讲一下 Spring 的 IoC 和 AOP，以及它们解决什么问题。",
+    "expected_answer": "IoC（控制反转）/DI（依赖注入）：对象创建与依赖装配交给容器管理，降低耦合；AOP（面向切面）：通过代理在方法前后织入横切逻辑（事务、日志、鉴权），基于 JDK 动态代理（接口）或 CGLIB（类）。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "Redis 是单线程为什么快？它用了哪些数据结构？",
+    "expected_answer": "纯内存操作 + io 多路复用（epoll 事件驱动）避免线程切换与锁竞争；Redis6 后网络 IO 拆多线程。常用数据结构：字符串、列表、哈希、集合、有序集合（底层可由跳表 ziplist/intset 等编码）。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "介绍一下计算机网络里的 TCP 三次握手和四次挥手。",
+    "expected_answer": "三次握手：SYN→SYN+ACK→ACK，建立可靠连接、同步序列号；四次挥手：FIN→ACK→FIN→ACK，因全双工需双方各自关闭，被动方收到 FIN 先回 ACK，应用层 close 后再发 FIN。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "sample_type": "出题形态"
+  },
+  {
+    "query": "为什么 HashMap 的长度要设计成 2 的幂次方？回答：这样 hash 后定位桶索引时用（n-1）& hash 位运算代替取模，且配合扩容 rehash 高效；元素过多会树化成红黑树。请判断并补充这个回答中不够准确的地方。",
+    "expected_answer": "候选判断：2 的幂主要目的是让 (n-1)&hash 低效取模等价，且扩容时元素要么原位要么原位移+oldCap，rehash 高效；以及降低 hash 冲突——但这依赖高低位异或扰动。答中'元素过多树化红黑树'正确。需补充：真正保证均匀分布需 hash 高位参与扰动（resize/扰动函数），仅 2 的幂不足以杜绝冲突。",
+    "expected_source": "JAVA集合.md",
+    "source_file": "JAVA集合.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "synchronized 在 JDK6 之后做了哪些优化？回答：引入了偏向锁、轻量级锁，并且锁可以升级，还引入了自旋、锁消除和锁粗化。请评估这个回答缺失了哪个关键点。",
+    "expected_answer": "回答已涵盖锁升级（无锁→偏向→轻量级→重量级，基于对象头 Mark Word）与自旋/锁消除/锁粗化。缺失的关键点：锁的膨胀是基于对象头 Mark Word 记录，CAS 抢占；以及重量级锁依赖 OS 互斥量（Monitor），存在用户态/内核态切换开销；自适应自旋是 JDK 演进点。",
+    "expected_source": "JUC.md",
+    "source_file": "JUC.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "请用一句话解释下 volatile 的可见性。回答：volatile 保证了多线程之间的可见性和有序性，禁止指令重排，但不保证原子性。请问这个回答在什么场景下会误导人？",
+    "expected_answer": "候选判断：volatile 保证读写的可见性与有序性（内存屏障、禁止重排），不保证复合操作（如 i++）的原子性。误导点：说'保证有序性'不够精确——volatile 只在单个 volatile 读/写及其周边加内存屏障，不能保证整个代码块内所有指令有序；且对引用/数组内部元素的可见性也有限制。",
+    "expected_source": "JUC.md",
+    "source_file": "JUC.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "说说 MySQL 事务的隔离级别。回答：有读未提交、读已提交、可重复读、串行化四档，MySQL 默认是可重复读，靠 MVCC 解决幻读。请指出该回答对'可重复读如何解决幻读'的表述是否需要纠正。",
+    "expected_answer": "候选判断：默认隔离级别是 RR（可重复读）；InnoDB 用 MVCC（快照读）+ 间隙锁/next-key lock（当前读）共同解决幻读——'靠 MVCC 解决幻读'这个表述不完整，MVCC 解决的是快照读下的可重复读，真正的幻读（当前读场景）靠 next-key lock。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "Spring 默认是单例还是多例？回答：Spring 默认是单例。请问这些 Bean 在多线程访问下是否安全，需要怎么注意？",
+    "expected_answer": "候选判断：默认单例（singleton）。单例 Bean 若持有可变实例字段（无状态原则）则线程不安全，因为多线程共享同一实例；需注意不要用可变的实例变量存状态，改用局部变量、无状态 Service、或 ThreadLocal。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "Redis 的过期删除策略有哪些？回答：惰性删除和定期删除结合。请说明为什么不能只用定时删除，什么场景需要 RDB/AOF 持久化来配合。",
+    "expected_answer": "候选判断：Redis 用惰性删除 + 定期删除组合。只用定时删除：每个 key 一个定时器，CPU 开销大（尤其大量 key）；只靠惰性删除：过期但一直不被访问的 key 常驻内存（内存泄漏）。持久化（RDB/AOF）解决内存数据在宕机后丢失的问题，与过期删除互补。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "JVM 的类加载过程是怎样的？回答：加载、验证、准备、解析、初始化，并且默认使用双亲委派机制。请补充该回答缺少的一个阶段或关键机制。",
+    "expected_answer": "候选判断：回答已列 5 个阶段（加载、链接、初始化，其中链接含验证/准备/解析三大步），双亲委派机制正确。可补充：JVM 是三大子系统（类加载、运行时数据区、执行引擎）；加载阶段可自定义类加载器、可通过 SPI（线程上下文类加载器）打破双亲委派。",
+    "expected_source": "JVM内存模型.pdf",
+    "source_file": "JVM内存模型.pdf",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "讲一下 TCP 拥塞控制。回答：通过慢启动、拥塞避免、快重传、快恢复四个算法来避免网络拥塞，其中慢启动是每轮窗口翻倍。请问这个回答是否准确，还缺什么？",
+    "expected_answer": "候选判断：回答正确描述了 TCP 拥塞控制四算法（慢启动、拥塞避免、快重传、快恢复）。慢启动注意：并非无限翻倍，超过 ssthresh（慢启动阈值）会进入拥塞避免（线性加1）；收到三次重复 ACK 触发快重传+快恢复。回答缺：ssthresh 阈值与两种启动阶段的切换条件。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "sample_type": "评价形态"
+  },
+  {
+    "query": "HashMap 是线程安全的吗？回答：不是，多线程并发 put 会导致数据丢失，甚至在高版本中触发死循环。请判断这个说法是否正确并说明原因。",
+    "expected_answer": "候选判断：HashMap 非线程安全正确；多线程并发 put 可能导致数据丢失或覆盖（丢失更新）；但'在高版本中触发死循环'不准确——CPU 死循环是 JDK7 及更早 resizing 时头插法并发扩容导致环形链表，JDK8 后改为尾插法（红黑树化）已消除该问题。",
+    "expected_source": "JAVA集合.md",
+    "source_file": "JAVA集合.md",
+    "sample_type": "评价形态"
+  }
+]
