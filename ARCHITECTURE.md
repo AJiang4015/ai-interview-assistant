@@ -22,7 +22,7 @@
 | 层级 | 选型 |
 |------|------|
 | 后端框架 | Python · **FastAPI 0.115** + uvicorn + Pydantic v2 / pydantic-settings |
-| LLM（文本生成） | 阿里云百炼 **qwen3.7-max**（`BAILIAN_API_KEY`） |
+| LLM（文本生成） | 阿里云百炼 **qwen-turbo**（`BAILIAN_API_KEY`） |
 | Embedding（向量化） | 硅基流动 **Qwen/Qwen3-Embedding-4B**（`SILICONFLOW_API_KEY`） |
 | Rerank（重排） | 硅基流动 **Qwen/Qwen3-Reranker-4B**（替代本地 BGE，规避 HuggingFace 不可达/ OMP 冲突，见 DECISIONS.md DR-003） |
 | 向量库 | **FAISS**（faiss-cpu，HNSW / IVF / Flat，`vector_index_type`） |

@@ -103,7 +103,7 @@ docs/evaluation/        = 改完实际怎么样（新建职责，随评估工作
    - 代码风格/命名（压缩版）
    - 错误与安全（统一异常、转义、白名单，压缩版）
    - Git：一问题一 commit（详见 PROCESS）
-   - LLM 调用约束：qwen3.7-max / SiliconFlow，禁止本地重型模型（铁律3）
+   - LLM 调用约束：qwen-turbo / SiliconFlow，禁止本地重型模型（铁律3）
 2. 三大铁律 ⛔（浓缩版 + 指向 PROBLEM.md 单一事实来源）
 3. 环境最低要求（Python 3.10+，一行）
 ```

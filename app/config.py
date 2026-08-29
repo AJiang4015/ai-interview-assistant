@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     bailian_api_key: str
-    bailian_model: str = "qwen3.7-max"
+    bailian_model: str = "qwen-turbo"
     siliconflow_api_key: str
     siliconflow_model: str = "Qwen/Qwen3-Embedding-4B"
     knowledge_base_dir: str = "data/knowledge_base"
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     sample_eval_rate: float = 0.05
     faithfulness_threshold: float = 0.6
     session_token_budget: float = 1.0
-    token_price: dict = {"qwen3.7-max": {"input": 1.2, "output": 4.0}}
+    token_price: dict = {"qwen-turbo": {"input": 0.3, "output": 0.6}}
 
     # ===== 面试/复习画像 =====
     # 今日一题在用户无历史数据、也无此前面试岗位记录时回退的全局默认岗位

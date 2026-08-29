@@ -30,7 +30,7 @@
 4. **代码风格**：Python 3.10+，PEP 8（4 空格、行宽约 100），类 `PascalCase`、模块/函数/变量 `snake_case`、常量全大写；配置一律 `from app.config import settings`，禁止散落魔法常量。
 5. **错误与安全**：统一异常经 `app/exceptions.py`，API 层映射状态码；文件操作需路径穿越防护 + 扩展名白名单（md/pdf/docx）+ `~$` 临时文件过滤；前端 `innerHTML` 注入前必须 `escapeHtml()`，Markdown 用 DOMPurify 过滤。
 6. **Git 纪律**：一个行为问题一个独立 commit（细节见 `PROCESS.md` §6）。
-7. **LLM / 资源约束**：LLM 用百炼 `qwen3.7-max`；Embedding/Rerank 用硅基流动；**禁止引入本地重型模型作主链路**（见下方铁律3）。
+7. **LLM / 资源约束**：LLM 用百炼 `qwen-turbo`；Embedding/Rerank 用硅基流动；**禁止引入本地重型模型作主链路**（见下方铁律3）。
 8. **新增环境/流程类硬约束**：先归入 `PROCESS.md` 或 `AGENTS.md` 相应小节，避免正文膨胀。
 
 ---
