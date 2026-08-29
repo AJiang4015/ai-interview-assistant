@@ -40,6 +40,7 @@ class RAGService:
         hybrid_retriever=None,    # HybridRetriever | None
         reranker=None,            # RerankService | None
         cache_service=None,       # ResponseCache | None
+        facade=None,              # RetrievalFacade | None（Part B 统一检索入口）
     ):
         self.faiss = faiss_store
         self.embedding = embedding
@@ -50,6 +51,7 @@ class RAGService:
         self.hybrid_retriever = hybrid_retriever
         self.reranker = reranker
         self.cache = cache_service
+        self.facade = facade
         self.top_k = settings.top_k
         self.eval_monitor = EvalMonitor(self.llm)
 
@@ -81,43 +83,57 @@ class RAGService:
         else:
             session_id = await self._ensure_session(session_id)
 
-        # 1. 查询改写
-        retrieval_query = question
-        if self.query_rewriter and self.query_rewriter.enabled:
-            retrieval_query = await self.query_rewriter.rewrite(question)
-
-        # 2. 混合检索
-        if self.hybrid_retriever and self.hybrid_retriever.enabled:
-            raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
+        # --- 检索：统一走 facade（Part B）；无 facade 时保留原内联链路作降级 ---
+        if self.facade is not None:
+            facade_result = await self.facade.retrieve(question, top_k=self.top_k)
+            unique_results = facade_result.chunks
+            context = facade_result.to_text()
+            if not unique_results:
+                monitor.record_vector_query(True)
+                return QueryResponse(
+                    answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
+                    sources=[], retrieved_chunks=[], session_id=session_id,
+                )
+            monitor.record_vector_query(False)
         else:
-            query_vector = await self.embedding.encode([retrieval_query])
-            if query_vector.size == 0:
-                raise ValueError("Failed to encode question")
-            raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
+            # 1. 查询改写
+            retrieval_query = question
+            if self.query_rewriter and self.query_rewriter.enabled:
+                retrieval_query = await self.query_rewriter.rewrite(question)
 
-        if not raw_results:
-            monitor.record_vector_query(True)
-            return QueryResponse(
-                answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
-                sources=[], retrieved_chunks=[], session_id=session_id,
-            )
-        monitor.record_vector_query(False)
+            # 2. 混合检索
+            if self.hybrid_retriever and self.hybrid_retriever.enabled:
+                raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
+            else:
+                query_vector = await self.embedding.encode([retrieval_query])
+                if query_vector.size == 0:
+                    raise ValueError("Failed to encode question")
+                raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
 
-        # 3. 重排序
-        if self.reranker and self.reranker.enabled:
-            docs = [r.content for r in raw_results]
-            reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
-            content_to_result = {r.content: r for r in raw_results}
-            final_results = []
-            for rr in reranked:
-                if rr.content in content_to_result:
-                    final_results.append(content_to_result[rr.content])
-        else:
-            final_results = raw_results[:self.top_k]
+            if not raw_results:
+                monitor.record_vector_query(True)
+                return QueryResponse(
+                    answer="抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
+                    sources=[], retrieved_chunks=[], session_id=session_id,
+                )
+            monitor.record_vector_query(False)
 
-        final_results = self._apply_parent_expansion(final_results)
-        unique_results = self._deduplicate_results(final_results)
-        context = "\n---\n".join([r.content for r in unique_results])
+            # 3. 重排序
+            if self.reranker and self.reranker.enabled:
+                docs = [r.content for r in raw_results]
+                reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
+                content_to_result = {r.content: r for r in raw_results}
+                final_results = []
+                for rr in reranked:
+                    if rr.content in content_to_result:
+                        final_results.append(content_to_result[rr.content])
+            else:
+                final_results = raw_results[:self.top_k]
+
+            final_results = self._apply_parent_expansion(final_results)
+            unique_results = self._deduplicate_results(final_results)
+            context = "\n---\n".join([r.content for r in unique_results])
+
         prompt = await self._build_prompt(session_id, question, context)
         if tracer is not None:
             with tracer.start_as_current_span("rag.llm_call") as span:
@@ -192,44 +208,65 @@ class RAGService:
                 })
                 return
 
-        # 3. 混合检索
-        if self.hybrid_retriever and self.hybrid_retriever.enabled:
-            raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
-        else:
-            query_vector = await self.embedding.encode([retrieval_query])
-            if query_vector.size == 0:
-                yield self._sse_event("error", {"message": "Failed to encode question"})
+        # --- 检索：统一走 facade（Part B）；无 facade 时保留原内联链路作降级 ---
+        if self.facade is not None:
+            facade_result = await self.facade.retrieve(question, top_k=self.top_k)
+            unique_results = facade_result.chunks
+            if not unique_results:
+                logger.warning("No relevant chunks found")
+                monitor.record_vector_query(True)
+                yield self._sse_event("retrieval", {"sources": [], "chunks": []})
+                yield self._sse_event("done", {
+                    "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
+                    "sources": [],
+                    "session_id": session_id,
+                })
                 return
-            raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
-
-        if not raw_results:
-            logger.warning("No relevant chunks found")
-            monitor.record_vector_query(True)
-            yield self._sse_event("retrieval", {"sources": [], "chunks": []})
-            yield self._sse_event("done", {
-                "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
-                "sources": [],
-                "session_id": session_id,
-            })
-            return
-        monitor.record_vector_query(False)
-
-        # 4. 重排序
-        if self.reranker and self.reranker.enabled:
-            docs = [r.content for r in raw_results]
-            reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
-            # 用重排序结果替换原始结果
-            final_results = []
-            content_to_result = {r.content: r for r in raw_results}
-            for rr in reranked:
-                if rr.content in content_to_result:
-                    orig = content_to_result[rr.content]
-                    final_results.append(orig)
+            monitor.record_vector_query(False)
         else:
-            final_results = raw_results[:self.top_k]
+            # 1. 查询改写
+            retrieval_query = question
+            if self.query_rewriter and self.query_rewriter.enabled:
+                retrieval_query = await self.query_rewriter.rewrite(question)
 
-        final_results = self._apply_parent_expansion(final_results)
-        unique_results = self._deduplicate_results(final_results)
+            # 2. 混合检索
+            if self.hybrid_retriever and self.hybrid_retriever.enabled:
+                raw_results = await self.hybrid_retriever.retrieve(retrieval_query, top_k=20)
+            else:
+                query_vector = await self.embedding.encode([retrieval_query])
+                if query_vector.size == 0:
+                    yield self._sse_event("error", {"message": "Failed to encode question"})
+                    return
+                raw_results = await self.faiss.asearch(query_vector[0], self.top_k)
+
+            if not raw_results:
+                logger.warning("No relevant chunks found")
+                monitor.record_vector_query(True)
+                yield self._sse_event("retrieval", {"sources": [], "chunks": []})
+                yield self._sse_event("done", {
+                    "answer": "抱歉，我在知识库中没有找到相关内容。请尝试重新构建索引或添加更多相关文档。",
+                    "sources": [],
+                    "session_id": session_id,
+                })
+                return
+            monitor.record_vector_query(False)
+
+            # 3. 重排序
+            if self.reranker and self.reranker.enabled:
+                docs = [r.content for r in raw_results]
+                reranked = await self.reranker.rerank(retrieval_query, docs, top_k=self.top_k)
+                # 用重排序结果替换原始结果
+                final_results = []
+                content_to_result = {r.content: r for r in raw_results}
+                for rr in reranked:
+                    if rr.content in content_to_result:
+                        orig = content_to_result[rr.content]
+                        final_results.append(orig)
+            else:
+                final_results = raw_results[:self.top_k]
+
+            final_results = self._apply_parent_expansion(final_results)
+            unique_results = self._deduplicate_results(final_results)
 
         sources_data = [
             {"file": r.source_file, "chunk_index": r.chunk_index, "score": r.score}

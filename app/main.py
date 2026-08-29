@@ -34,6 +34,7 @@ from app.services.rerank_service import RerankService
 from app.services.retrieval_service import HybridRetriever
 from app.services.sparse_retriever import SparseRetriever
 from app.services.cache_service import ResponseCache
+from app.services.retrieval_facade import RetrievalFacade
 from app.api.evaluation import router as evaluation_router
 from app.services.evaluation_service import EvaluationService
 from app.services.eval_testset import TestSetGenerator
@@ -167,6 +168,15 @@ async def lifespan(app: FastAPI):
         ttl=settings.cache_ttl,
     )
 
+    # 统一检索门面（Part B）：问答与面试共用同一条已验证管线
+    retrieval_facade = RetrievalFacade(
+        faiss_store=faiss_store,
+        embedding=embedding_service,
+        query_rewriter=query_rewrite_service,
+        hybrid_retriever=hybrid_retriever,
+        reranker=rerank_service,
+    )
+
     index_service = IndexService(faiss_store, doc_store, embedding_service,
                                  hybrid_retriever=hybrid_retriever, sparse=sparse_retriever)
     rag_service = RAGService(
@@ -177,6 +187,7 @@ async def lifespan(app: FastAPI):
         hybrid_retriever=hybrid_retriever,
         reranker=rerank_service,
         cache_service=response_cache,
+        facade=retrieval_facade,
     )
 
     # Initialize resume parser
