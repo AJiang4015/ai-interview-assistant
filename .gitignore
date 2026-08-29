@@ -107,8 +107,7 @@ tmp/
 
 # Superpowers development files
 .superpowers/
-# Evaluation data
-data/eval_testset.json
+# Evaluation: 评测集（金标准）纳入版本控制；评测报告为运行产物，继续忽略
 data/eval_reports/
 # Interview database (user data)
 data/interviews.db

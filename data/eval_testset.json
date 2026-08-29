@@ -1,0 +1,1012 @@
+[
+  {
+    "question": "Redis 为什么是单线程却还能这么快？从 Redis 自身的线程模型和操作系统层面的 IO 多路复用/事件驱动各解释一层。",
+    "expected_answer": "两层原因：(1) Redis 侧：数据全部在内存中，配合高效的数据结构和单线程模型，单线程避免了多线程加锁与线程上下文切换的开销；Redis6 之后把网络 IO 拆成多线程，后台任务（bgsave、lazyfree）用子线程。(2) OS 侧：Redis 基于 IO 多路复用（Linux 上 epoll、BSD 上 kqueue、Windows 上 IOCP），用单线程或少量线程同时监听海量连接，内核只返回真正就绪的 fd，配合非阻塞 IO，避免了对大量空闲连接的无效轮询。",
+    "expected_source": [
+      "Redis.md",
+      "操作系统.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a"
+  },
+  {
+    "question": "要设计一个能支撑高并发的网络服务，从操作系统层面和 Java 层面分别会选择什么方案，两者有什么共同点？",
+    "expected_answer": "操作系统层面用 IO 多路复用（select/poll/epoll），单线程代理等待大量 socket，事件驱动派发给 handler，是现代高性能服务器（Nginx、Redis、Netty）的基石；Java 层面用 NIO/AIO：NIO 用 Selector+Channel+Buffer 实现 IO 多路复用，NIO 是主流并由 Netty 等框架基于它构建。共同点：用少量线程处理大量连接，避免每个连接一个线程带来的内存与上下文切换开销。",
+    "expected_source": [
+      "操作系统.md",
+      "Java基础.md"
+    ],
+    "source_file": "操作系统.md",
+    "question_type": "a"
+  },
+  {
+    "question": "JVM 用分代收集来降低 GC 成本，MySQL/其他存储也讲究'热点与冷数据分层'。请结合 JVM 的新生代-老年代分代思路，说明为什么'分而治之'能提升系统效率。",
+    "expected_answer": "JVM 把堆分为新生代和老年代：新生代对象朝生夕灭，用复制算法（Minor GC，Eden 满触发）快速回收，代价小；老年代存活对象多，用标记清除/标记整理（Major/Full GC）。因为绝大多数对象寿命极短，只在新生代里做高频轻量回收，避免每次都对整个堆做重量级标记整理，从而显著降低 GC 停顿与开销。这体现了'按对象存活年龄分层、多数快路径、少数慢路径'的取舍。",
+    "expected_source": "JVM内存模型.pdf",
+    "source_file": "JVM内存模型.pdf",
+    "question_type": "a"
+  },
+  {
+    "question": "Spring 解决循环依赖为什么必须是'三级'缓存而不只是两级？这个'第三级'到底存的是什么？",
+    "expected_answer": "第一、二级存对象，第三级 singletonFactories 存的是 ObjectFactory 工厂，而不是对象。用三级的原因是为了推迟'创建代理对象'的时机：Spring 在实例化早期并不知道 Bean 未来是否需要 AOP 代理，若把原始对象直接放二级，B 拿到的是未代理的 A，AOP 就失效；若提前建代理又违背 BeanPostProcessor 的设计。三级缓存的工厂 getObject() 在被真正依赖注入调用时才判断是否需要代理并返回最终对象（原始或代理）。因此：不存在 AOP 时两级缓存就够，三级缓存的本质是为了在循环依赖场景下正确兼顾 AOP。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "a"
+  },
+  {
+    "question": "MySQL InnoDB 默认隔离级别是可重复读。结合脏读、不可重复读、幻读三种并发问题，说明这个默认选择解决了什么、又没完全解决什么。",
+    "expected_answer": "可重复读能解决脏读和不可重复读（快照读基于 Read View / MVCC，事务执行过程中看到的行与你事务启动时一致），但未完全解决幻读——范围查询的结果集行数增减仍可能出现；InnoDB 通过间隙锁等再加一层来预防。三种并发问题中脏读是读到未提交数据、不可重复读是同一行值变化、幻读是结果集行数增减。隔离级别越高性能越差，可重复读作为默认是在一致性与并发性能间的平衡。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "a"
+  },
+  {
+    "question": "HTTP 长连接和 WebSocket 都能复用 TCP 连接，为什么实时聊天场景要用 WebSocket 而不是 HTTP 长连接？分析两者的本质区别。",
+    "expected_answer": "HTTP 长连接（Keep-Alive）仍是'客户端请求-服务器响应'的半双工模式，服务器不能主动给客户端发消息；WebSocket 是独立的 ws/wss 协议，一次握手后双方地位对等、可随时全双工互发，数据帧头部仅几个字节开销极低。因此实时聊天、股票行情、协作编辑等需要服务端主动推送的场景用 WebSocket；HTTP 长连接只用于减少短连接反复建握手的开销。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "a"
+  },
+  {
+    "question": "hashCode 和 equals 有什么关系？两个对象 equals 相等时 hashCode 必须相等吗，反过来呢？",
+    "expected_answer": "重写 equals() 时必须同时重写 hashCode()，保证'相等的对象有相等的哈希码'这一约定；若不重写，Set/HashMap 里可能出现'值相等却存了多份'的重复元素。反向不成立：hashCode 相等不代表 equals 相等（哈希冲突是允许的）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b"
+  },
+  {
+    "question": "String、StringBuffer、StringBuilder 三者有什么区别？分别在什么场景下选择？",
+    "expected_answer": "区别本质在线程安全性：String 本身和内部 char 数组用 final，不可变、线程安全，适合常量；StringBuffer 通过给公共方法加 synchronized 实现线程安全，适合多线程频繁修改；StringBuilder 功能与 StringBuffer 一致但非线程安全，性能最好，适合单线程拼接场景（循环拼字符串时最推荐）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b"
+  },
+  {
+    "question": "Java 抽象类和接口有什么区别？",
+    "expected_answer": "抽象类只能被单一继承一个，接口可以被实现多个；抽象类用于'定义'（抽象模板、可含普通的属性和方法实现、可含构造函数），接口用于'能力'（8 之前只有抽象方法，8 起可含 default 和 static 方法，不能有构造函数）。抽象类不能被 final 修饰（否则无法继承），也不能被实例化，只能被继承。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b"
+  },
+  {
+    "question": "JDK 动态代理和 CGLIB 动态代理的区别是什么？Spring 默认怎么选？",
+    "expected_answer": "JDK 动态代理要求目标类必须实现接口，原理是生成一个实现相同接口的代理类，通过反射调用，性能略慢；CGLIB 不要求接口，原理是生成目标类的子类继承并重写方法，性能较快，但无法代理 final 类/final 方法。Spring 默认策略：目标有接口用 JDK Proxy，无接口用 CGLIB。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b"
+  },
+  {
+    "question": "进程和线程的区别是什么？为什么有了进程还要线程？",
+    "expected_answer": "进程是资源分配的基本单位，拥有独立地址空间/内存/文件句柄，切换开销大、健壮（一个进程崩溃不影响其他进程）；线程是 CPU 调度的基本单位，共享所属进程资源但有自己的栈/寄存器/PC，切换开销小，但一个线程崩溃会导致整个进程崩溃。要线程是因为进程太'重'：每次创建要分配全套资源、切换要保存恢复大量上下文，且进程间内存隔离导致数据共享要靠复杂的 IPC；线程作为轻量级进程共享资源、独立执行，代价更低。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b"
+  },
+  {
+    "question": "TCP 和 UDP 有什么区别？各自适合什么场景？",
+    "expected_answer": "TCP 面向连接（三次握手）、可靠（不丢不重不乱，靠序列号/ACK/超时重传/校验）、面向字节流（可能粘包）、头部至少 20 字节、慢，有流量控制和拥塞控制，适合 HTTP/FTP 等要求高可靠的应用；UDP 无连接、不可靠、面向报文保留边界、头部固定 8 字节、快，无流量/拥塞控制，适合 DNS、视频直播、语音、游戏等能容忍少量丢包、要求实时性的场景。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "b"
+  },
+  {
+    "question": "InnoDB 和 MyISAM 存储引擎有什么区别？默认用哪个？",
+    "expected_answer": "InnoDB：支持事务、行级锁、外键、有 redo log 崩溃恢复和 MVCC，5.5 起作为默认引擎，写多读多都适合；MyISAM：不支持事务、表级锁、不支持外键、崩溃数据丢失风险高，读性能优越适合读多写少的日志类场景、数据仓库。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "b"
+  },
+  {
+    "question": "Redis 的 AOF 和 RDB 两种持久化有什么区别？",
+    "expected_answer": "AOF：每执行一条写操作，将命令以追加方式写入文件（三种回写策略 always/EverySec/no），文件过大时可 aof 重写瘦身，数据丢失风险更小但文件更大；RDB：把某一时刻的内存数据以二进制写入磁盘，通过 save（阻塞主线程）和 bgsave（不阻塞主线程）保存。RDB 快但可能丢两次快照之间的数据，AOF 恢复慢但更完整，常两种配合使用。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "b"
+  },
+  {
+    "question": "乐观锁和悲观锁有什么区别？各自的适用场景和实现方式？",
+    "expected_answer": "悲观锁假设冲突频繁，读取数据时就加锁（如 mutex、synchronized 等传统锁，数据库行锁），适合写多的场景；乐观锁假设很少冲突，读取时不加锁，在提交更新时检查数据是否被改过（版本号 versioning 或 CAS 原子操作），适合读多写少的场景，能避免加锁开销，数据库 MVCC 就是乐观锁思想。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b"
+  },
+  {
+    "question": "平时用数据库和 Redis 做缓存，结果缓存命中率特别低，你会怎么排查和优化？",
+    "expected_answer": "先看缓存 key 的设计。当前 response cache 的 key 用 md5(question|session_id|msg_count)，session_id 和 msg_count 几乎让 key 变成唯一值，命中率趋近 0；优化方向：区分检索缓存与响应缓存两个层级——检索缓存 key 只依赖归一化后的问题文本（去空格、转小写、去标点），同一问题在不同会话/轮次都能命中，且检索是 Embedding+FAISS+BM25+RRF 中最耗时的环节，命中提速明显；响应缓存因强依赖上下文天然命中率低。不要过度加入 session_id、msg_count 等可变维度。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "b"
+  },
+  {
+    "question": "你说说你这套 RAG 项目从用户提问到出答案，都经历了哪些步骤？",
+    "expected_answer": "用户提问 → ① Embedding 编码原问题（无重写）→ ② FAISS 检索 Top-K 相似 chunk → ③ 去重（set 过滤重复 chunk）→ ④ 构造 Prompt（System + 参考资料 + 原问题）→ ⑤ 调用 LLM 生成答案 → ⑥ 组装响应（answer + sources + retrieved_chunks）。在 stream_query 中还会经 query rewrite、混合检索（FAISS 稠密 + BM25 稀疏 + RRF 融合）、rerank（SiliconFlow Qwen/Qwen3-Reranker-4B）、响应缓存等环节，通过 SSE 流式返回。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c"
+  },
+  {
+    "question": "面试官：你项目里的 Spring 事务怎么就会失效了？跟我讲讲有哪几种典型情况。",
+    "expected_answer": "典型失效情况：(1) 方法不是 public（AOP 默认只代理 public 方法）；(2) 方法被 final/static 修饰（CGLIB 靠继承，final 无法重写、static 属于类无法代理）；(3) 同类内 this 调用（this 指向原始对象绕过了代理，事务增强不生效）；(4) 异常被 catch 掉了没重新抛出，事务管理器感知不到；(5) 抛的是受检异常 checked exception，默认只对 RuntimeException 和 Error 回滚，需 rollbackFor=Exception.class；(6) 数据库引擎不支持事务（如 MyISAM）；(7) 传播行为配置错误。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "c"
+  },
+  {
+    "question": "Redis 做分布式锁你用过没？怎么实现的？要注意哪些坑？",
+    "expected_answer": "简单用 SET key value NX EX（SetNX + 过期时间）实现，但 SetNX 的问题：过期时间难设置、无法判断当前锁持有者、解锁不是原子的、不支持锁续期、可重入需用 hset 实现；需引入 lua 脚本实现原子解锁。更完整的方案用 Redisson：用 Hash + ThreadId 作为锁标识实现可重入，watchdog 看门狗每 internalLockLeaseTime/3（默认 30s 则每 10s）自动续期一次，重置过期时间 30s；多实例下从 RedLock（半数以上 N/2+1 节点加锁成功）演进为 MultiLock（所有指定锁全部成功才算成功、任一失败立即回滚、全部释放）。一个靠谱分布式锁需满足：独占性、高可用、防死锁（超时兜底）、不乱抢（只能自己解自己的锁）、重入性。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "c"
+  },
+  {
+    "question": "那你说说，TCP 三次握手为什么不能只握两次？",
+    "expected_answer": "为了防已失效的连接请求报文突然到达服务器导致错误。两次握手时，客户端发的 SYN 因网络延迟在滞留期后突然到达服务器，服务器误以为是新连接请求就返回 SYN+ACK 并建立连接、一直等待数据，但这是早已失效的请求，客户端不会理睬，白白浪费服务器资源。三次握手时，客户端收到这个滞后的 SYN+ACK 会发现自己根本没发起新连接，于是不发送第三次 ACK，服务器收不到 ACK 就知道连接无效，超时后关闭半开连接，避免了资源浪费。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c"
+  },
+  {
+    "question": "面试：为什么会说一个进程崩溃不会弄垮别的进程？",
+    "expected_answer": "核心是进程的独立性和内存保护机制：(1) 进程隔离性——每个进程有独立的内存空间，相同的虚拟地址被映射到不同的物理内存，一个进程崩溃它的内存被回收，不影响其他进程；(2) 进程独立性——各进程不共享文件、网络连接等资源。正是基于安全性（限制用户态权限避免系统被破坏）、隔离性（内核与用户程序清晰边界）、稳定性（用户进程崩溃不影响整个系统）来划分用户态/内核态，并保证进程健壮性。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "c"
+  },
+  {
+    "question": "你平时写代码用的那些注解，底层到底是怎么解析的，能讲下原理吗？",
+    "expected_answer": "注解本质是继承 java.lang.annotation.Annotation 的接口，编译后存储在 class 的属性表中。底层解析主要依赖反射：RetentionPolicy 为 RUNTIME 的注解信息会被加载到 JVM，运行时通过反射 API 读取——加载 .class → 获取 Class/Method/Field 反射对象 → 调用 getAnnotation() → JVM 动态创建一个实现该注解接口的代理对象（java.lang.reflect.Proxy）→ 调用注解属性方法时从代理对象内部持有的属性 Map 中取值。Spring 则用 ASM 做字节码扫描和元数据读取。注解作用域由 @Retention 决定：SOURCE（仅源码，如 Lombok）、CLASS（字节码、运行时丢弃）、RUNTIME（最常用，框架反射读取）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "c"
+  },
+  {
+    "question": "你们的文档是怎么送进这个 RAG 系统的？能讲一下文件入库的链路吗？",
+    "expected_answer": "链路：scan_md_files() 扫描 data/knowledge_base/ 下的 .md（md/pdf/docx 三种由 DocumentParser 选择对应解析器，pdf 用 pypdf、docx 用 python-docx，统一输出纯文本）→ split_file() 切分（先按 #/##/### 三级标题分段，再按段落凑 chunk_size，超长段用滑动窗口，步长 = chunk_size - overlap）→ embedding.encode() 把 chunk 批量向量化（32 条/批）→ faiss.add_vectors() 写入 FAISS 并带元数据（source_file、chunk_index、content）→ 落盘持久化向量索引与文档元数据 JSON。选 CHUNK_SIZE=1000、OVERLAP=200 是从语义粒度、Token 限制、检索精度考虑：约覆盖一个完整知识点、上下文窗口充足。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c"
+  },
+  {
+    "question": "你给讲讲，在浏览器里输入地址打开网页，这一路上都发生了哪些网络过程？",
+    "expected_answer": "① 解析 URL（协议、资源路径，非法则交给搜索引擎）；② 缓存判断（浏览器缓存 → 系统缓存 hosts → 路由器/ISP DNS 缓存）；③ DNS 解析（逐级查询根/顶级/权威域名服务器直到拿到 IP）；④ 获取目标 MAC 地址（同子网用 ARP 拿目的 MAC，跨网段交给网关再 ARP 拿网关 MAC）；⑤ TCP 三次握手建立连接；⑥ HTTPS 则再做 TLS 握手协商会话密钥；⑦ 发送 HTTP 请求；⑧ 服务器处理并返回响应；⑨ 浏览器解析 HTML/CSS/JS 并渲染页面。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c"
+  },
+  {
+    "question": "同样是两个 Integer，为什么 Integer a=100; Integer b=100 时 a==b 是 true，而 200 就是 false？",
+    "expected_answer": "这是 Java 的 Integer 缓存机制（IntegerCache）导致的'反直觉'现象：Integer 内部静态类 IntegerCache 在类加载时提前缓存 -128~127 的对象数组。调用 valueOf() 或自动装箱时，若值在 -128~127 范围内（可通过 JVM 参数 java.lang.Integer.IntegerCache.high 调高上限），直接返回缓存中同一个对象引用，所以两个 100 是同一个对象、== 为 true；超出范围（如 200）会 new Integer 各创建一个新对象，== 比较的是内存地址所以 false。开发中应改用 equals() 或 intValue() 比较数值。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d"
+  },
+  {
+    "question": "方法里 try 块 return \"a\"，finally 块 return \"b\"，最终返回什么？为什么会这样？",
+    "expected_answer": "最终返回 b。finally 块中的 return 会覆盖 try 中 return 的执行结果——try 中 return 的值已经暂存，但 finally 里的 return 会把它替换掉，所以方法返回 finally 中的值 b。这是 Java 里容易踩的反直觉点，实践中应避免在 finally 里写 return 和抛异常，否则会吞掉 try 的返回值或异常。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d"
+  },
+  {
+    "question": "fork 创建子进程时会复制父进程整个内存吗？为什么 fork 很快？（写时复制 COW）",
+    "expected_answer": "不会立即复制整个内存。fork 使用写时复制（Copy-on-Write）：调用 fork 时内核让子进程页表指向与父进程相同的物理内存帧，并把共享页标记为只读，几乎没有内存复制，所以 fork 很快；此后任一进程尝试写入这些只读页时触发保护性页错误，内核才真正复制该页：分配新物理帧、复制内容、更新触发写入那个进程的页表指向新可写页。COW 主要节省物理内存（只在修改时才产生副本）和 CPU 周期（fork 几乎瞬时完成）；最经典场景是 fork 后立即 exec，父进程内存压根不被子进程使用，若没有 COW 之前的复制会被立即丢弃造成巨大浪费。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d"
+  },
+  {
+    "question": "程序里 malloc(1KB) 和 malloc(1MB) 有什么区别？为什么一个快一个慢？",
+    "expected_answer": "区别在于是否触发系统调用及内存管理层级。malloc 是小额分配（1KB），先在 malloc 自己的用户态内存池里找空闲块，找到就标记返回，完全不涉及系统调用、速度极快；若池不够再通过 brk/mmap 向内核要一大块（如 128KB）划入池中。大额分配（1MB，glibc ptmalloc 阈值通常 128KB）会直接调用 mmap 系统调用向内核申请独立的匿名内存映射，涉及从用户态到内核态的切换，比小额慢；好处是 free 时能 munmap 完整归还给操作系统，避免池碎片化。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d"
+  },
+  {
+    "question": "epoll 监听的连接越多反而越高效，而不像 select/poll 越往下降级，这是为什么？",
+    "expected_answer": "select 用位图、poll 用数组，每次都要把整个 fd 集合从用户空间拷贝到内核空间，并在内核线性扫描所有 fd（还要用户程序遍历结果集合找就绪 fd），效率随 fd 数量线性下降 O(n)；epoll 底层用红黑树 + 双向链表，仅在第一次 epoll_ctl 时拷贝，内核通过回调机制直接把就绪 fd 放进一个就绪链表，epoll_wait 只需检查该链表是否为空并直接返回就绪的 fd 列表，用户无需遍历，效率近似常数 O(1)。所以 epoll 连接越多越体现优势，是 Linux 下高并发服务器（Nginx/Redis/Netty 等）基于的重要机制之一。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d"
+  },
+  {
+    "question": "JWT 号称'无状态、安全'，那它是不是加密的？为什么不能在 Payload 里放敏感信息？",
+    "expected_answer": "JWT 的 Payload 只是 Base64 编码，不是加密，任何人都能解码直接看到内容，所以绝不能存放密码等敏感信息（体现'反直觉'：看似安全实则明文可读）。JWT 是一个 Head.Payload.Signature 三段式结构。它确实无状态（服务器不存会话，靠共享 secret 验证签名即可在集群各节点独立完成校验、易水平扩展），但代价是无法主动作废、续签麻烦、体积较大。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "d"
+  },
+  {
+    "question": "给一个进程分配的物理帧越多，缺页率却可能反而上升？这合理吗？",
+    "expected_answer": "这在特定置换算法下是真实存在、看似反直觉的：Belady 异常。FIFO 页面置换算法下，分配的物理帧数增加时，缺页率反而可能上升（比如某访问序列在 3 帧时缺页更少、4 帧时更多）；原因是 FIFO 机械地换出最早进入内存的页，可能换出一个很快就要再用的'老页面'。最优算法 OPT 无法实现，LRU 是 OPT 的良好近似但实现成本高，时钟算法（Clock）是 LRU 的廉价近似，广泛使用。因此分配帧数并非越多越好的直觉在某些算法下是错的。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d"
+  },
+  {
+    "question": "值传递和引用传递，Java 里到底是哪一种？'传引用'传的是什么？",
+    "expected_answer": "Java 只存在值传递（按值传递），没有引用传递；所谓'引用'传的是地址值，把对象的引用（地址值）复制一份传给方法参数，而不是把引用变量本身传过去。所以方法内修改形参指向另一个对象不会影响实参，但通过地址值修改对象内部字段会生效——这是 Java 初学者最容易踩、也最能体现'边界'认知的一个知识点。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d"
+  },
+  {
+    "question": "Java 线程在底层和操作系统线程是什么关系？为什么历史上出现过'绿色线程'又放弃了它？",
+    "expected_answer": "现代 HotSpot JVM 采用 1:1 线程模型：Java 线程（java.lang.Thread）本质是 JVM 对操作系统本地线程（Native Thread）的抽象封装，创建一个 Java 线程底层会调用 OS API 建一个内核级线程，线程调度完全委托给 OS 调度器（操作系统文档：线程是 CPU 调度的基本单位，切换涉及用户态/内核态）。早期的'绿色线程'是 M:1 模型，多个 Java 线程映射到一个 OS 线程，在用户空间由 JVM 自管理调度，创建/切换快，但有致命缺点：无法利用多核（同一时刻最多用一个 CPU 核心），且一个线程执行阻塞系统调用会阻塞整个 OS 线程与上面所有线程，所以 JDK 1.2 起放弃，转向 1:1。为缓解 1:1 下 OS 线程重量级（约 1MB 栈、内核切换开销大、数量有限）的问题，JDK21 引入虚拟线程（M:N 模型，由 JVM 调度，极其轻量）。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a"
+  },
+  {
+    "question": "Java 里的乐观锁（CAS）和数据库里的乐观锁（版本号/MVCC）都是'乐观锁'，实现的底层思想有什么异同？",
+    "expected_answer": "相同点在于思想：都假设冲突少，操作时不加锁，提交更新时才检查数据是否被改过；Java 用 CAS 原子指令（内存位置V、预期原值A、新值B，仅当 V==A 时更新为 B），数据库用版本号（UPDATE ... WHERE version=oldVersion，影响行数为0则失败重试）或 MVCC 快照。差异点：CAS 一次只能保证一个共享变量的原子性（ABA 问题需 AtomicStampedReference 版本戳解决，多变量需封装成对象用 AtomicReference），且高竞争下自旋空耗 CPU；数据库乐观锁在事务层、可针对整行整表做版本比对，保存了多个历史版本（MVCC）而非只比对当前值。适用上二者都适合读多写少场景（操作系统文档也定义了乐观锁：假设数据一般不冲突，提交更新时检查版本号或 CAS）。",
+    "expected_source": [
+      "JUC.md",
+      "MySQL.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a"
+  },
+  {
+    "question": "要保证'一个线程修改了变量其他线程立刻能看到'，Java 的 JMM/volatile 和操作系统的 CPU 缓存分层之间有什么关联？",
+    "expected_answer": "JMM（Java 内存模型）规定主内存与每个线程私有工作内存的交互：线程对变量的运算必须在工作内存进行，不能直接读写主内存；volatile 通过写后立即回写主内存 + 使其他线程工作内存中的缓存失效，从而保证可见性，并通过插入内存屏障禁止指令重排序保证有序性（Java 文档自述 volatile 主要保证可见性+有序性，不保证原子性）。从操作系统/硬件视角看，这对应 CPU 多级缓存与内存屏障：现代 CPU 用缓存行缓存数据、为提升流水线效率会指令重排，正是 JMM 用 volatile/内存屏障来对抗的那类优化问题。二者都需要'主存 vs 缓存副本'的一致性协议，JMM 是语言层抽象，Cache Coherence/内存屏障是硬件层实现。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a"
+  },
+  {
+    "question": "Redis 为什么单线程还能处理海量连接？结合 Redis 的线程模型和 Java NIO/多路复用讲讲背后的共性。",
+    "expected_answer": "Redis 侧：数据在内存中 + 高效数据结构 + 单线程模型，单线程避免了加锁与线程上下文切换；Redis6 起网络 IO 拆多线程、后台任务（bgsave/lazyfree）用子线程（Redis.md）。系统性/Java 侧：都靠 IO 多路复用——操作系统用 select/poll/epoll 用少量线程同时监听海量 fd（epoll 回调只返回就绪 fd，O(1)），Java NIO 用 Selector+Channel+Buffer 实现同样的多路复用，Netty 等框架基于它（Java基础.md+操作系统.md）。共性本质：用少量线程处理大量连接，避免'一个连接一个线程'带来的内存（每线程 1MB 栈）和内核态上下文切换开销。",
+    "expected_source": [
+      "Redis.md",
+      "Java基础.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a"
+  },
+  {
+    "question": "数据库里的死锁和 Java 并发里的死锁是同一回事吗？产生条件和规避思路分别是什么？",
+    "expected_answer": "是同一个概念：两个及以上执行体因互占对方所需资源而无限期互相等待（操作系统与 JUC 文档都给出 Coffman 四必要条件：互斥、占有并等待、不可剥夺、循环等待，必须同时满足）。规避思路都在'破坏四个必要条件之一'：操作系统/并发侧重资源有序申请（给资源线性排序、强制按序申请，最常用）与带超时锁（tryLock）；数据库遇死锁除了同样靠合理设计，还靠检测与回滚（死锁检测、牺牲一个事务回滚）；Java 侧还用 ReentrantLock.tryLock(timeout) 破坏不可剥夺/循环等待，排查用 jstack。（JUC.md 的死锁小节与操作系统.md 的死锁小节内容一致，可互相印证。）",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a"
+  },
+  {
+    "question": "Java 线程的 6 种状态和操作系统里线程/进程的状态机是同一个模型吗？转换有什么异同？",
+    "expected_answer": "不是同一个模型，但有对应关系。Java 线程状态（Thread.State）：NEW/RUNNABLE/BLOCKED/WAITING/TIMED_WAITING/TERMINATED；其中 RUNNABLE 把操作系统的'就绪'与'运行'合并为一个状态，且 Java 不区分这两者。BLOCKED 专指等待监视器锁（synchronized），对应 JMM 的锁竞争；WAITING/TIMED_WAITING 对应 Object.wait()/Thread.join()/sleep 等主动让出执行权。操作系统文档给出的进程五状态（新建/就绪/运行/阻塞/终止）及切换，更细粒度区分'就绪'与'运行'（靠时间片/调度器轮转）。差异核心：Java 把锁等待(synchronized)单列为 BLOCKED，把其他让权(sleep/wait/join)统归 WAITING，而 OS 只用一个'阻塞'状态；且 Java RUNNABLE 含运行+就绪两态，OS 拆为两态。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a"
+  },
+  {
+    "question": "Redis 的 AOF 持久化和 MySQL 的 redo log 都是'日志先行'的崩溃恢复思路，它们各自怎么保证不丢数据？",
+    "expected_answer": "共性：都通过先写日志（Write-Ahead，日志先行）保证崩溃后能恢复、不丢已提交的数据。Redis AOF：每执行一条写命令以追加方式写文件，回写策略 always/EverySec/no 控制写盘时机，文件过大用 aof 重写瘦身；数据丢失风险靠刷盘频率控制（都落盘就不丢）。MySQL（InnoDB redo log）：持久性靠 redo log 保证，先写重做日志再改数据页，崩溃后用 redo log 重放恢复；另外用 undo log 配 MVCC 保证原子性（回滚）与隔离性。差异：Redis AOF 记录的是命令级日志、粒度粗、可重放整个历史（重写瘦身）；MySQL redo log 记录物理页级变更、循环使用、粒度细、只在崩溃恢复期使用，正常时配合 buffer pool 的 checkpoint。",
+    "expected_source": [
+      "Redis.md",
+      "MySQL.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a"
+  },
+  {
+    "question": "用 Java 写高并发网络服务为什么推荐 NIO 而不是传统的多线程 BIO？结合 Java 的 NIO 组件和操作系统的 IO 模型解释。",
+    "expected_answer": "BIO 是同步阻塞：一个线程阻塞等待一个连接（recvfrom 阻塞到数据拷贝完成），一个连接一个线程，线程是重量级资源（约 1MB 栈、内核态切换开销大），并发连接一多就内存/切换爆炸。NIO 是同步非阻塞 + IO 多路复用：用 Selector 把多个 Channel 注册上去，单线程/少量线程 select() 阻塞等待任意 Channel 就绪，就绪后再非阻塞读写，一个线程可管理成千上万连接（Java基础.md 的 NIO Selector/Channel/Buffer）。这与操作系统 IO 模型里的'IO 多路复用（select/poll/epoll）'是同一思想：把大量 socket 的监视权委托给内核，内核只返回真正就绪的 fd，避免对空闲连接无效轮询；Linux 底层就是 epoll（操作系统.md）。Netty 等框架正是基于 NIO+多路复用实现高并发。",
+    "expected_source": [
+      "Java基础.md",
+      "操作系统.md"
+    ],
+    "source_file": "Java基础.md",
+    "question_type": "a"
+  },
+  {
+    "question": "面试老被问到，Redis明明是个单线程，咋还能跑得那么快呢？你能结合它自己的线程设计，还有底层操作系统的IO多路复用机制，给我详细盘一盘吗？",
+    "expected_answer": "两层原因：(1) Redis 侧：数据全部在内存中，配合高效的数据结构和单线程模型，单线程避免了多线程加锁与线程上下文切换的开销；Redis6 之后把网络 IO 拆成多线程，后台任务（bgsave、lazyfree）用子线程。(2) OS 侧：Redis 基于 IO 多路复用（Linux 上 epoll、BSD 上 kqueue、Windows 上 IOCP），用单线程或少量线程同时监听海量连接，内核只返回真正就绪的 fd，配合非阻塞 IO，避免了对大量空闲连接的无效轮询。",
+    "expected_source": [
+      "Redis.md",
+      "操作系统.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "都说Redis是单线程的，但性能却贼高，这到底是为啥呀？能不能从它本身的线程架构，还有操作系统那边的IO多路复用和事件驱动这两个角度，给我拆解一下它快的原因？",
+    "expected_answer": "两层原因：(1) Redis 侧：数据全部在内存中，配合高效的数据结构和单线程模型，单线程避免了多线程加锁与线程上下文切换的开销；Redis6 之后把网络 IO 拆成多线程，后台任务（bgsave、lazyfree）用子线程。(2) OS 侧：Redis 基于 IO 多路复用（Linux 上 epoll、BSD 上 kqueue、Windows 上 IOCP），用单线程或少量线程同时监听海量连接，内核只返回真正就绪的 fd，配合非阻塞 IO，避免了对大量空闲连接的无效轮询。",
+    "expected_source": [
+      "Redis.md",
+      "操作系统.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们线上高并发网络服务怎么扛的？操作系统和 Java 两边分别用了啥方案？这俩有啥共同之处？",
+    "expected_answer": "操作系统层面用 IO 多路复用（select/poll/epoll），单线程代理等待大量 socket，事件驱动派发给 handler，是现代高性能服务器（Nginx、Redis、Netty）的基石；Java 层面用 NIO/AIO：NIO 用 Selector+Channel+Buffer 实现 IO 多路复用，NIO 是主流并由 Netty 等框架基于它构建。共同点：用少量线程处理大量连接，避免每个连接一个线程带来的内存与上下文切换开销。",
+    "expected_source": [
+      "操作系统.md",
+      "Java基础.md"
+    ],
+    "source_file": "操作系统.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "聊一下高并发网络服务的架构设计呗，从 OS 和 Java 两个维度分别说说方案，它们底层思路有什么相通的地方？",
+    "expected_answer": "操作系统层面用 IO 多路复用（select/poll/epoll），单线程代理等待大量 socket，事件驱动派发给 handler，是现代高性能服务器（Nginx、Redis、Netty）的基石；Java 层面用 NIO/AIO：NIO 用 Selector+Channel+Buffer 实现 IO 多路复用，NIO 是主流并由 Netty 等框架基于它构建。共同点：用少量线程处理大量连接，避免每个连接一个线程带来的内存与上下文切换开销。",
+    "expected_source": [
+      "操作系统.md",
+      "Java基础.md"
+    ],
+    "source_file": "操作系统.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：JVM搞了新生代和老年代，MySQL也搞冷热数据分层，这些系统为啥都喜欢把东西'分层而治'？能聊聊这种设计背后的共性思路，以及它到底是怎么降低开销的吗？",
+    "expected_answer": "JVM 把堆分为新生代和老年代：新生代对象朝生夕灭，用复制算法（Minor GC，Eden 满触发）快速回收，代价小；老年代存活对象多，用标记清除/标记整理（Major/Full GC）。因为绝大多数对象寿命极短，只在新生代里做高频轻量回收，避免每次都对整个堆做重量级标记整理，从而显著降低 GC 停顿与开销。这体现了'按对象存活年龄分层、多数快路径、少数慢路径'的取舍。",
+    "expected_source": "JVM内存模型.pdf",
+    "source_file": "JVM内存模型.pdf",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你说说，JVM的分代GC把对象分新生代老年代，存储系统也把数据分热和冷，这种'分而治之'的策略凭啥就能提升效率？跨系统来看，它们的设计哲学有啥相通的地方？",
+    "expected_answer": "JVM 把堆分为新生代和老年代：新生代对象朝生夕灭，用复制算法（Minor GC，Eden 满触发）快速回收，代价小；老年代存活对象多，用标记清除/标记整理（Major/Full GC）。因为绝大多数对象寿命极短，只在新生代里做高频轻量回收，避免每次都对整个堆做重量级标记整理，从而显著降低 GC 停顿与开销。这体现了'按对象存活年龄分层、多数快路径、少数慢路径'的取舍。",
+    "expected_source": "JVM内存模型.pdf",
+    "source_file": "JVM内存模型.pdf",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "说说Spring的循环依赖呗，为啥两级缓存搞不定非得搞三级？那第三级缓存里到底存的是啥玩意儿？",
+    "expected_answer": "第一、二级存对象，第三级 singletonFactories 存的是 ObjectFactory 工厂，而不是对象。用三级的原因是为了推迟'创建代理对象'的时机：Spring 在实例化早期并不知道 Bean 未来是否需要 AOP 代理，若把原始对象直接放二级，B 拿到的是未代理的 A，AOP 就失效；若提前建代理又违背 BeanPostProcessor 的设计。三级缓存的工厂 getObject() 在被真正依赖注入调用时才判断是否需要代理并返回最终对象（原始或代理）。因此：不存在 AOP 时两级缓存就够，三级缓存的本质是为了在循环依赖场景下正确兼顾 AOP。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试总问Spring解决循环依赖，为啥非得三级缓存不可，两级不行吗？第三级里面具体装了什么？",
+    "expected_answer": "第一、二级存对象，第三级 singletonFactories 存的是 ObjectFactory 工厂，而不是对象。用三级的原因是为了推迟'创建代理对象'的时机：Spring 在实例化早期并不知道 Bean 未来是否需要 AOP 代理，若把原始对象直接放二级，B 拿到的是未代理的 A，AOP 就失效；若提前建代理又违背 BeanPostProcessor 的设计。三级缓存的工厂 getObject() 在被真正依赖注入调用时才判断是否需要代理并返回最终对象（原始或代理）。因此：不存在 AOP 时两级缓存就够，三级缓存的本质是为了在循环依赖场景下正确兼顾 AOP。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：InnoDB 为啥默认选可重复读？你从脏读、不可重复读、幻读这三个并发问题角度聊聊，RR 级别到底解决了哪些、哪个其实没彻底解决？",
+    "expected_answer": "可重复读能解决脏读和不可重复读（快照读基于 Read View / MVCC，事务执行过程中看到的行与你事务启动时一致），但未完全解决幻读——范围查询的结果集行数增减仍可能出现；InnoDB 通过间隙锁等再加一层来预防。三种并发问题中脏读是读到未提交数据、不可重复读是同一行值变化、幻读是结果集行数增减。隔离级别越高性能越差，可重复读作为默认是在一致性与并发性能间的平衡。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们线上 MySQL 用的 InnoDB 默认隔离级别是可重复读吧，那它相对于其他级别，脏读、不可重复读、幻读这三个坑分别填了哪些，哪个其实没完全填上？",
+    "expected_answer": "可重复读能解决脏读和不可重复读（快照读基于 Read View / MVCC，事务执行过程中看到的行与你事务启动时一致），但未完全解决幻读——范围查询的结果集行数增减仍可能出现；InnoDB 通过间隙锁等再加一层来预防。三种并发问题中脏读是读到未提交数据、不可重复读是同一行值变化、幻读是结果集行数增减。隔离级别越高性能越差，可重复读作为默认是在一致性与并发性能间的平衡。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "既然 HTTP 长连接也能复用 TCP，那实时聊天为啥非得用 WebSocket？这俩本质上有啥区别？",
+    "expected_answer": "HTTP 长连接（Keep-Alive）仍是'客户端请求-服务器响应'的半双工模式，服务器不能主动给客户端发消息；WebSocket 是独立的 ws/wss 协议，一次握手后双方地位对等、可随时全双工互发，数据帧头部仅几个字节开销极低。因此实时聊天、股票行情、协作编辑等需要服务端主动推送的场景用 WebSocket；HTTP 长连接只用于减少短连接反复建握手的开销。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "HTTP keep-alive 和 WebSocket 都能保持连接不断开，像即时通讯这种场景为啥选 WebSocket 而不是 HTTP 长连接？它俩底层到底差在哪？",
+    "expected_answer": "HTTP 长连接（Keep-Alive）仍是'客户端请求-服务器响应'的半双工模式，服务器不能主动给客户端发消息；WebSocket 是独立的 ws/wss 协议，一次握手后双方地位对等、可随时全双工互发，数据帧头部仅几个字节开销极低。因此实时聊天、股票行情、协作编辑等需要服务端主动推送的场景用 WebSocket；HTTP 长连接只用于减少短连接反复建握手的开销。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试常问啊，你重写 equals 的时候为啥非得把 hashCode 也重写了？要是俩对象 equals 返回 true，它俩的 hashCode 能不一样吗？那要是 hashCode 相同，equals 就必定为 true 吗？",
+    "expected_answer": "重写 equals() 时必须同时重写 hashCode()，保证'相等的对象有相等的哈希码'这一约定；若不重写，Set/HashMap 里可能出现'值相等却存了多份'的重复元素。反向不成立：hashCode 相等不代表 equals 相等（哈希冲突是允许的）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "equals 和 hashCode 这俩方法到底是个啥绑定关系？我就想知道，如果两个对象 equals 判定相等了，它的 hashCode 还能不一样吗？反过来说，要是 hashCode 算出来一样，它俩 equals 就一定是 true 吗？",
+    "expected_answer": "重写 equals() 时必须同时重写 hashCode()，保证'相等的对象有相等的哈希码'这一约定；若不重写，Set/HashMap 里可能出现'值相等却存了多份'的重复元素。反向不成立：hashCode 相等不代表 equals 相等（哈希冲突是允许的）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官老爱问Java里String、StringBuffer和StringBuilder的区别，你能详细讲讲它们到底有啥不同，以及平时写代码时该怎么选吗？",
+    "expected_answer": "区别本质在线程安全性：String 本身和内部 char 数组用 final，不可变、线程安全，适合常量；StringBuffer 通过给公共方法加 synchronized 实现线程安全，适合多线程频繁修改；StringBuilder 功能与 StringBuffer 一致但非线程安全，性能最好，适合单线程拼接场景（循环拼字符串时最推荐）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "平时写Java代码处理字符串，String、StringBuilder和StringBuffer这三者到底差在哪儿啊？实际场景里一般怎么决定用哪个？",
+    "expected_answer": "区别本质在线程安全性：String 本身和内部 char 数组用 final，不可变、线程安全，适合常量；StringBuffer 通过给公共方法加 synchronized 实现线程安全，适合多线程频繁修改；StringBuilder 功能与 StringBuffer 一致但非线程安全，性能最好，适合单线程拼接场景（循环拼字符串时最推荐）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试老被问到，Java里的抽象类和接口到底有啥不一样？",
+    "expected_answer": "抽象类只能被单一继承一个，接口可以被实现多个；抽象类用于'定义'（抽象模板、可含普通的属性和方法实现、可含构造函数），接口用于'能力'（8 之前只有抽象方法，8 起可含 default 和 static 方法，不能有构造函数）。抽象类不能被 final 修饰（否则无法继承），也不能被实例化，只能被继承。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你说说Java中abstract class和interface到底在哪些地方有区别呗？",
+    "expected_answer": "抽象类只能被单一继承一个，接口可以被实现多个；抽象类用于'定义'（抽象模板、可含普通的属性和方法实现、可含构造函数），接口用于'能力'（8 之前只有抽象方法，8 起可含 default 和 static 方法，不能有构造函数）。抽象类不能被 final 修饰（否则无法继承），也不能被实例化，只能被继承。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "JDK动态代理跟CGLIB动态代理到底差在哪？Spring默认走的是哪种代理方式？",
+    "expected_answer": "JDK 动态代理要求目标类必须实现接口，原理是生成一个实现相同接口的代理类，通过反射调用，性能略慢；CGLIB 不要求接口，原理是生成目标类的子类继承并重写方法，性能较快，但无法代理 final 类/final 方法。Spring 默认策略：目标有接口用 JDK Proxy，无接口用 CGLIB。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Spring AOP里JDK动态代理和CGLIB有啥区别？框架默认帮你选的是哪个？",
+    "expected_answer": "JDK 动态代理要求目标类必须实现接口，原理是生成一个实现相同接口的代理类，通过反射调用，性能略慢；CGLIB 不要求接口，原理是生成目标类的子类继承并重写方法，性能较快，但无法代理 final 类/final 方法。Spring 默认策略：目标有接口用 JDK Proxy，无接口用 CGLIB。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试总爱问进程和线程到底有啥不一样，既然操作系统都有进程了，干嘛还要多此一举搞个线程出来？",
+    "expected_answer": "进程是资源分配的基本单位，拥有独立地址空间/内存/文件句柄，切换开销大、健壮（一个进程崩溃不影响其他进程）；线程是 CPU 调度的基本单位，共享所属进程资源但有自己的栈/寄存器/PC，切换开销小，但一个线程崩溃会导致整个进程崩溃。要线程是因为进程太'重'：每次创建要分配全套资源、切换要保存恢复大量上下文，且进程间内存隔离导致数据共享要靠复杂的 IPC；线程作为轻量级进程共享资源、独立执行，代价更低。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "大佬给讲讲呗，进程跟线程究竟差在哪儿？还有啊，既然进程都能执行任务了，为啥非得再弄个线程出来？",
+    "expected_answer": "进程是资源分配的基本单位，拥有独立地址空间/内存/文件句柄，切换开销大、健壮（一个进程崩溃不影响其他进程）；线程是 CPU 调度的基本单位，共享所属进程资源但有自己的栈/寄存器/PC，切换开销小，但一个线程崩溃会导致整个进程崩溃。要线程是因为进程太'重'：每次创建要分配全套资源、切换要保存恢复大量上下文，且进程间内存隔离导致数据共享要靠复杂的 IPC；线程作为轻量级进程共享资源、独立执行，代价更低。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试的时候经常被问到TCP和UDP，你能说说它俩到底有啥不一样，以及分别适合用在哪些业务场景里吗？",
+    "expected_answer": "TCP 面向连接（三次握手）、可靠（不丢不重不乱，靠序列号/ACK/超时重传/校验）、面向字节流（可能粘包）、头部至少 20 字节、慢，有流量控制和拥塞控制，适合 HTTP/FTP 等要求高可靠的应用；UDP 无连接、不可靠、面向报文保留边界、头部固定 8 字节、快，无流量/拥塞控制，适合 DNS、视频直播、语音、游戏等能容忍少量丢包、要求实时性的场景。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "平时开发老要用到传输层协议，TCP和UDP这俩到底有啥核心区别？啥时候该上TCP，啥时候用UDP更合适？",
+    "expected_answer": "TCP 面向连接（三次握手）、可靠（不丢不重不乱，靠序列号/ACK/超时重传/校验）、面向字节流（可能粘包）、头部至少 20 字节、慢，有流量控制和拥塞控制，适合 HTTP/FTP 等要求高可靠的应用；UDP 无连接、不可靠、面向报文保留边界、头部固定 8 字节、快，无流量/拥塞控制，适合 DNS、视频直播、语音、游戏等能容忍少量丢包、要求实时性的场景。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "MySQL 的 InnoDB 和 MyISAM 这俩存储引擎到底有啥区别啊？还有现在默认建表用的是哪个？",
+    "expected_answer": "InnoDB：支持事务、行级锁、外键、有 redo log 崩溃恢复和 MVCC，5.5 起作为默认引擎，写多读多都适合；MyISAM：不支持事务、表级锁、不支持外键、崩溃数据丢失风险高，读性能优越适合读多写少的日志类场景、数据仓库。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试老被问到 InnoDB 跟 MyISAM 引擎的差异，能说说它俩的区别以及现在默认用的是哪个吗？",
+    "expected_answer": "InnoDB：支持事务、行级锁、外键、有 redo log 崩溃恢复和 MVCC，5.5 起作为默认引擎，写多读多都适合；MyISAM：不支持事务、表级锁、不支持外键、崩溃数据丢失风险高，读性能优越适合读多写少的日志类场景、数据仓库。",
+    "expected_source": "MySQL.md",
+    "source_file": "MySQL.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你说说Redis里RDB和AOF这两种持久化方式都有啥区别呗？",
+    "expected_answer": "AOF：每执行一条写操作，将命令以追加方式写入文件（三种回写策略 always/EverySec/no），文件过大时可 aof 重写瘦身，数据丢失风险更小但文件更大；RDB：把某一时刻的内存数据以二进制写入磁盘，通过 save（阻塞主线程）和 bgsave（不阻塞主线程）保存。RDB 快但可能丢两次快照之间的数据，AOF 恢复慢但更完整，常两种配合使用。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Redis做数据持久化，AOF和RDB这俩机制到底有什么不一样？",
+    "expected_answer": "AOF：每执行一条写操作，将命令以追加方式写入文件（三种回写策略 always/EverySec/no），文件过大时可 aof 重写瘦身，数据丢失风险更小但文件更大；RDB：把某一时刻的内存数据以二进制写入磁盘，通过 save（阻塞主线程）和 bgsave（不阻塞主线程）保存。RDB 快但可能丢两次快照之间的数据，AOF 恢复慢但更完整，常两种配合使用。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试老爱问乐观锁和悲观锁，你能对比下这俩到底有啥区别吗？顺便聊聊平时在什么业务场景下会选哪个，还有具体在代码里是怎么实现的？",
+    "expected_answer": "悲观锁假设冲突频繁，读取数据时就加锁（如 mutex、synchronized 等传统锁，数据库行锁），适合写多的场景；乐观锁假设很少冲突，读取时不加锁，在提交更新时检查数据是否被改过（版本号 versioning 或 CAS 原子操作），适合读多写少的场景，能避免加锁开销，数据库 MVCC 就是乐观锁思想。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "讲讲乐观锁和悲观锁呗，它俩的核心差异在哪？你们线上项目一般是怎么挑着用的，底层具体是靠什么机制来实现的？",
+    "expected_answer": "悲观锁假设冲突频繁，读取数据时就加锁（如 mutex、synchronized 等传统锁，数据库行锁），适合写多的场景；乐观锁假设很少冲突，读取时不加锁，在提交更新时检查数据是否被改过（版本号 versioning 或 CAS 原子操作），适合读多写少的场景，能避免加锁开销，数据库 MVCC 就是乐观锁思想。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们线上 Redis 缓存命中率一直上不去，你是怎么排查原因和做调优的？",
+    "expected_answer": "先看缓存 key 的设计。当前 response cache 的 key 用 md5(question|session_id|msg_count)，session_id 和 msg_count 几乎让 key 变成唯一值，命中率趋近 0；优化方向：区分检索缓存与响应缓存两个层级——检索缓存 key 只依赖归一化后的问题文本（去空格、转小写、去标点），同一问题在不同会话/轮次都能命中，且检索是 Embedding+FAISS+BM25+RRF 中最耗时的环节，命中提速明显；响应缓存因强依赖上下文天然命中率低。不要过度加入 session_id、msg_count 等可变维度。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "要是发现系统里 Redis 缓存命中率特别低，你一般有哪些定位思路和具体的优化手段？",
+    "expected_answer": "先看缓存 key 的设计。当前 response cache 的 key 用 md5(question|session_id|msg_count)，session_id 和 msg_count 几乎让 key 变成唯一值，命中率趋近 0；优化方向：区分检索缓存与响应缓存两个层级——检索缓存 key 只依赖归一化后的问题文本（去空格、转小写、去标点），同一问题在不同会话/轮次都能命中，且检索是 Embedding+FAISS+BM25+RRF 中最耗时的环节，命中提速明显；响应缓存因强依赖上下文天然命中率低。不要过度加入 session_id、msg_count 等可变维度。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "b",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们那个 RAG 项目，用户发个 query 进去到最后生成回答，中间这整个链路是怎么串起来的？能具体讲讲走了哪几个流程吗？",
+    "expected_answer": "用户提问 → ① Embedding 编码原问题（无重写）→ ② FAISS 检索 Top-K 相似 chunk → ③ 去重（set 过滤重复 chunk）→ ④ 构造 Prompt（System + 参考资料 + 原问题）→ ⑤ 调用 LLM 生成答案 → ⑥ 组装响应（answer + sources + retrieved_chunks）。在 stream_query 中还会经 query rewrite、混合检索（FAISS 稠密 + BM25 稀疏 + RRF 融合）、rerank（SiliconFlow Qwen/Qwen3-Reranker-4B）、响应缓存等环节，通过 SSE 流式返回。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "聊聊你们 RAG 系统的数据流转呗，就是用户输入一句话后，系统是怎么一步步处理，最后把答案给吐出来的？",
+    "expected_answer": "用户提问 → ① Embedding 编码原问题（无重写）→ ② FAISS 检索 Top-K 相似 chunk → ③ 去重（set 过滤重复 chunk）→ ④ 构造 Prompt（System + 参考资料 + 原问题）→ ⑤ 调用 LLM 生成答案 → ⑥ 组装响应（answer + sources + retrieved_chunks）。在 stream_query 中还会经 query rewrite、混合检索（FAISS 稠密 + BM25 稀疏 + RRF 融合）、rerank（SiliconFlow Qwen/Qwen3-Reranker-4B）、响应缓存等环节，通过 SSE 流式返回。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "平时写代码有没有踩过Spring事务失效的坑？你给总结下，一般都有哪些情况会导致加了注解但事务没生效？",
+    "expected_answer": "典型失效情况：(1) 方法不是 public（AOP 默认只代理 public 方法）；(2) 方法被 final/static 修饰（CGLIB 靠继承，final 无法重写、static 属于类无法代理）；(3) 同类内 this 调用（this 指向原始对象绕过了代理，事务增强不生效）；(4) 异常被 catch 掉了没重新抛出，事务管理器感知不到；(5) 抛的是受检异常 checked exception，默认只对 RuntimeException 和 Error 回滚，需 rollbackFor=Exception.class；(6) 数据库引擎不支持事务（如 MyISAM）；(7) 传播行为配置错误。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "聊聊Spring事务失效的那些事儿呗，你在实际项目里，碰到过哪些导致事务不起作用的典型场景？",
+    "expected_answer": "典型失效情况：(1) 方法不是 public（AOP 默认只代理 public 方法）；(2) 方法被 final/static 修饰（CGLIB 靠继承，final 无法重写、static 属于类无法代理）；(3) 同类内 this 调用（this 指向原始对象绕过了代理，事务增强不生效）；(4) 异常被 catch 掉了没重新抛出，事务管理器感知不到；(5) 抛的是受检异常 checked exception，默认只对 RuntimeException 和 Error 回滚，需 rollbackFor=Exception.class；(6) 数据库引擎不支持事务（如 MyISAM）；(7) 传播行为配置错误。",
+    "expected_source": "Spring.md",
+    "source_file": "Spring.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们项目里有用 Redis 搞过分布式锁吗？具体是怎么落地的？中间有没有踩过什么坑？",
+    "expected_answer": "简单用 SET key value NX EX（SetNX + 过期时间）实现，但 SetNX 的问题：过期时间难设置、无法判断当前锁持有者、解锁不是原子的、不支持锁续期、可重入需用 hset 实现；需引入 lua 脚本实现原子解锁。更完整的方案用 Redisson：用 Hash + ThreadId 作为锁标识实现可重入，watchdog 看门狗每 internalLockLeaseTime/3（默认 30s 则每 10s）自动续期一次，重置过期时间 30s；多实例下从 RedLock（半数以上 N/2+1 节点加锁成功）演进为 MultiLock（所有指定锁全部成功才算成功、任一失败立即回滚、全部释放）。一个靠谱分布式锁需满足：独占性、高可用、防死锁（超时兜底）、不乱抢（只能自己解自己的锁）、重入性。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "基于 Redis 做分布式锁你们是怎么搞的？能说说具体的实现思路吗？实际用的时候有哪些容易翻车的地方？",
+    "expected_answer": "简单用 SET key value NX EX（SetNX + 过期时间）实现，但 SetNX 的问题：过期时间难设置、无法判断当前锁持有者、解锁不是原子的、不支持锁续期、可重入需用 hset 实现；需引入 lua 脚本实现原子解锁。更完整的方案用 Redisson：用 Hash + ThreadId 作为锁标识实现可重入，watchdog 看门狗每 internalLockLeaseTime/3（默认 30s 则每 10s）自动续期一次，重置过期时间 30s；多实例下从 RedLock（半数以上 N/2+1 节点加锁成功）演进为 MultiLock（所有指定锁全部成功才算成功、任一失败立即回滚、全部释放）。一个靠谱分布式锁需满足：独占性、高可用、防死锁（超时兜底）、不乱抢（只能自己解自己的锁）、重入性。",
+    "expected_source": "Redis.md",
+    "source_file": "Redis.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试老被问TCP建连为啥非得三次，两次到底行不行，你给解释下呗。",
+    "expected_answer": "为了防已失效的连接请求报文突然到达服务器导致错误。两次握手时，客户端发的 SYN 因网络延迟在滞留期后突然到达服务器，服务器误以为是新连接请求就返回 SYN+ACK 并建立连接、一直等待数据，但这是早已失效的请求，客户端不会理睬，白白浪费服务器资源。三次握手时，客户端收到这个滞后的 SYN+ACK 会发现自己根本没发起新连接，于是不发送第三次 ACK，服务器收不到 ACK 就知道连接无效，超时后关闭半开连接，避免了资源浪费。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "TCP三次握手能不能缩减成两次啊？为啥非得走三次不可？",
+    "expected_answer": "为了防已失效的连接请求报文突然到达服务器导致错误。两次握手时，客户端发的 SYN 因网络延迟在滞留期后突然到达服务器，服务器误以为是新连接请求就返回 SYN+ACK 并建立连接、一直等待数据，但这是早已失效的请求，客户端不会理睬，白白浪费服务器资源。三次握手时，客户端收到这个滞后的 SYN+ACK 会发现自己根本没发起新连接，于是不发送第三次 ACK，服务器收不到 ACK 就知道连接无效，超时后关闭半开连接，避免了资源浪费。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你说说，为啥一个进程崩溃了，不会把别的进程也带走？",
+    "expected_answer": "核心是进程的独立性和内存保护机制：(1) 进程隔离性——每个进程有独立的内存空间，相同的虚拟地址被映射到不同的物理内存，一个进程崩溃它的内存被回收，不影响其他进程；(2) 进程独立性——各进程不共享文件、网络连接等资源。正是基于安全性（限制用户态权限避免系统被破坏）、隔离性（内核与用户程序清晰边界）、稳定性（用户进程崩溃不影响整个系统）来划分用户态/内核态，并保证进程健壮性。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试的时候被问到，一个进程挂掉了为啥不会连累其他进程，这怎么解释？",
+    "expected_answer": "核心是进程的独立性和内存保护机制：(1) 进程隔离性——每个进程有独立的内存空间，相同的虚拟地址被映射到不同的物理内存，一个进程崩溃它的内存被回收，不影响其他进程；(2) 进程独立性——各进程不共享文件、网络连接等资源。正是基于安全性（限制用户态权限避免系统被破坏）、隔离性（内核与用户程序清晰边界）、稳定性（用户进程崩溃不影响整个系统）来划分用户态/内核态，并保证进程健壮性。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "像Spring里那些注解，框架底层是怎么扫描和识别出来的？你能说说这个原理不？",
+    "expected_answer": "注解本质是继承 java.lang.annotation.Annotation 的接口，编译后存储在 class 的属性表中。底层解析主要依赖反射：RetentionPolicy 为 RUNTIME 的注解信息会被加载到 JVM，运行时通过反射 API 读取——加载 .class → 获取 Class/Method/Field 反射对象 → 调用 getAnnotation() → JVM 动态创建一个实现该注解接口的代理对象（java.lang.reflect.Proxy）→ 调用注解属性方法时从代理对象内部持有的属性 Map 中取值。Spring 则用 ASM 做字节码扫描和元数据读取。注解作用域由 @Retention 决定：SOURCE（仅源码，如 Lombok）、CLASS（字节码、运行时丢弃）、RUNTIME（最常用，框架反射读取）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java注解这东西，代码里写了之后，运行时到底是怎么被读取和处理的？底层机制能聊聊吗？",
+    "expected_answer": "注解本质是继承 java.lang.annotation.Annotation 的接口，编译后存储在 class 的属性表中。底层解析主要依赖反射：RetentionPolicy 为 RUNTIME 的注解信息会被加载到 JVM，运行时通过反射 API 读取——加载 .class → 获取 Class/Method/Field 反射对象 → 调用 getAnnotation() → JVM 动态创建一个实现该注解接口的代理对象（java.lang.reflect.Proxy）→ 调用注解属性方法时从代理对象内部持有的属性 Map 中取值。Spring 则用 ASM 做字节码扫描和元数据读取。注解作用域由 @Retention 决定：SOURCE（仅源码，如 Lombok）、CLASS（字节码、运行时丢弃）、RUNTIME（最常用，框架反射读取）。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们 RAG 项目的数据接入是怎么搞的？那些文档从拿过来到最终入库，中间具体走了个什么流程？",
+    "expected_answer": "链路：scan_md_files() 扫描 data/knowledge_base/ 下的 .md（md/pdf/docx 三种由 DocumentParser 选择对应解析器，pdf 用 pypdf、docx 用 python-docx，统一输出纯文本）→ split_file() 切分（先按 #/##/### 三级标题分段，再按段落凑 chunk_size，超长段用滑动窗口，步长 = chunk_size - overlap）→ embedding.encode() 把 chunk 批量向量化（32 条/批）→ faiss.add_vectors() 写入 FAISS 并带元数据（source_file、chunk_index、content）→ 落盘持久化向量索引与文档元数据 JSON。选 CHUNK_SIZE=1000、OVERLAP=200 是从语义粒度、Token 限制、检索精度考虑：约覆盖一个完整知识点、上下文窗口充足。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "聊下你们系统的数据准备呗，那些文件都是怎么弄进 RAG 里的，整个入库的 pipeline 能详细说说吗？",
+    "expected_answer": "链路：scan_md_files() 扫描 data/knowledge_base/ 下的 .md（md/pdf/docx 三种由 DocumentParser 选择对应解析器，pdf 用 pypdf、docx 用 python-docx，统一输出纯文本）→ split_file() 切分（先按 #/##/### 三级标题分段，再按段落凑 chunk_size，超长段用滑动窗口，步长 = chunk_size - overlap）→ embedding.encode() 把 chunk 批量向量化（32 条/批）→ faiss.add_vectors() 写入 FAISS 并带元数据（source_file、chunk_index、content）→ 落盘持久化向量索引与文档元数据 JSON。选 CHUNK_SIZE=1000、OVERLAP=200 是从语义粒度、Token 限制、检索精度考虑：约覆盖一个完整知识点、上下文窗口充足。",
+    "expected_source": "problem.md",
+    "source_file": "problem.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试老爱问的那个，浏览器里敲个网址回车，到页面出来，这中间的网络链路都经历了啥？",
+    "expected_answer": "① 解析 URL（协议、资源路径，非法则交给搜索引擎）；② 缓存判断（浏览器缓存 → 系统缓存 hosts → 路由器/ISP DNS 缓存）；③ DNS 解析（逐级查询根/顶级/权威域名服务器直到拿到 IP）；④ 获取目标 MAC 地址（同子网用 ARP 拿目的 MAC，跨网段交给网关再 ARP 拿网关 MAC）；⑤ TCP 三次握手建立连接；⑥ HTTPS 则再做 TLS 握手协商会话密钥；⑦ 发送 HTTP 请求；⑧ 服务器处理并返回响应；⑨ 浏览器解析 HTML/CSS/JS 并渲染页面。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "说下浏览器输入URL到拿到响应，中间这网络请求都经历了哪些环节呗？",
+    "expected_answer": "① 解析 URL（协议、资源路径，非法则交给搜索引擎）；② 缓存判断（浏览器缓存 → 系统缓存 hosts → 路由器/ISP DNS 缓存）；③ DNS 解析（逐级查询根/顶级/权威域名服务器直到拿到 IP）；④ 获取目标 MAC 地址（同子网用 ARP 拿目的 MAC，跨网段交给网关再 ARP 拿网关 MAC）；⑤ TCP 三次握手建立连接；⑥ HTTPS 则再做 TLS 握手协商会话密钥；⑦ 发送 HTTP 请求；⑧ 服务器处理并返回响应；⑨ 浏览器解析 HTML/CSS/JS 并渲染页面。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "c",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java里Integer比较有个挺反直觉的现象，值100的时候==是true，换成200就变false了，能解释下为啥吗？",
+    "expected_answer": "这是 Java 的 Integer 缓存机制（IntegerCache）导致的'反直觉'现象：Integer 内部静态类 IntegerCache 在类加载时提前缓存 -128~127 的对象数组。调用 valueOf() 或自动装箱时，若值在 -128~127 范围内（可通过 JVM 参数 java.lang.Integer.IntegerCache.high 调高上限），直接返回缓存中同一个对象引用，所以两个 100 是同一个对象、== 为 true；超出范围（如 200）会 new Integer 各创建一个新对象，== 比较的是内存地址所以 false。开发中应改用 equals() 或 intValue() 比较数值。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试被问到，两个Integer对象，值都是100用双等号比较返回true，但值是200就返回false了，这是为什么啊？",
+    "expected_answer": "这是 Java 的 Integer 缓存机制（IntegerCache）导致的'反直觉'现象：Integer 内部静态类 IntegerCache 在类加载时提前缓存 -128~127 的对象数组。调用 valueOf() 或自动装箱时，若值在 -128~127 范围内（可通过 JVM 参数 java.lang.Integer.IntegerCache.high 调高上限），直接返回缓存中同一个对象引用，所以两个 100 是同一个对象、== 为 true；超出范围（如 200）会 new Integer 各创建一个新对象，== 比较的是内存地址所以 false。开发中应改用 equals() 或 intValue() 比较数值。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java里try和finally都写了return，这俩打架了到底返回谁？为啥会这样？",
+    "expected_answer": "最终返回 b。finally 块中的 return 会覆盖 try 中 return 的执行结果——try 中 return 的值已经暂存，但 finally 里的 return 会把它替换掉，所以方法返回 finally 中的值 b。这是 Java 里容易踩的反直觉点，实践中应避免在 finally 里写 return 和抛异常，否则会吞掉 try 的返回值或异常。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "假如一个方法try里面return了个值，finally里面也return了个值，最后到底返回哪个？这个机制能讲讲吗？",
+    "expected_answer": "最终返回 b。finally 块中的 return 会覆盖 try 中 return 的执行结果——try 中 return 的值已经暂存，但 finally 里的 return 会把它替换掉，所以方法返回 finally 中的值 b。这是 Java 里容易踩的反直觉点，实践中应避免在 finally 里写 return 和抛异常，否则会吞掉 try 的返回值或异常。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "聊聊 fork 系统调用呗，子进程创建时到底有没有把父进程的内存全量复制过去？要是全复制了为啥执行速度还那么快？",
+    "expected_answer": "不会立即复制整个内存。fork 使用写时复制（Copy-on-Write）：调用 fork 时内核让子进程页表指向与父进程相同的物理内存帧，并把共享页标记为只读，几乎没有内存复制，所以 fork 很快；此后任一进程尝试写入这些只读页时触发保护性页错误，内核才真正复制该页：分配新物理帧、复制内容、更新触发写入那个进程的页表指向新可写页。COW 主要节省物理内存（只在修改时才产生副本）和 CPU 周期（fork 几乎瞬时完成）；最经典场景是 fork 后立即 exec，父进程内存压根不被子进程使用，若没有 COW 之前的复制会被立即丢弃造成巨大浪费。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试常考的，fork 建子进程的时候，是不是真把父进程所有的内存都拷贝了一份？既然要拷贝这么多东西，fork 咋还能这么快？",
+    "expected_answer": "不会立即复制整个内存。fork 使用写时复制（Copy-on-Write）：调用 fork 时内核让子进程页表指向与父进程相同的物理内存帧，并把共享页标记为只读，几乎没有内存复制，所以 fork 很快；此后任一进程尝试写入这些只读页时触发保护性页错误，内核才真正复制该页：分配新物理帧、复制内容、更新触发写入那个进程的页表指向新可写页。COW 主要节省物理内存（只在修改时才产生副本）和 CPU 周期（fork 几乎瞬时完成）；最经典场景是 fork 后立即 exec，父进程内存压根不被子进程使用，若没有 COW 之前的复制会被立即丢弃造成巨大浪费。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "malloc分配1K和1M底层走的路径一样吗？为啥大小不同速度差挺多的？",
+    "expected_answer": "区别在于是否触发系统调用及内存管理层级。malloc 是小额分配（1KB），先在 malloc 自己的用户态内存池里找空闲块，找到就标记返回，完全不涉及系统调用、速度极快；若池不够再通过 brk/mmap 向内核要一大块（如 128KB）划入池中。大额分配（1MB，glibc ptmalloc 阈值通常 128KB）会直接调用 mmap 系统调用向内核申请独立的匿名内存映射，涉及从用户态到内核态的切换，比小额慢；好处是 free 时能 munmap 完整归还给操作系统，避免池碎片化。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们代码里malloc分配个小块和大块内存，底层机制有啥不一样？比如1KB和1MB分配速度为啥差那么多？",
+    "expected_answer": "区别在于是否触发系统调用及内存管理层级。malloc 是小额分配（1KB），先在 malloc 自己的用户态内存池里找空闲块，找到就标记返回，完全不涉及系统调用、速度极快；若池不够再通过 brk/mmap 向内核要一大块（如 128KB）划入池中。大额分配（1MB，glibc ptmalloc 阈值通常 128KB）会直接调用 mmap 系统调用向内核申请独立的匿名内存映射，涉及从用户态到内核态的切换，比小额慢；好处是 free 时能 munmap 完整归还给操作系统，避免池碎片化。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "epoll 是不是连接数越多性能反而越好？为啥 select 连接一多就拉胯，epoll 却不会？",
+    "expected_answer": "select 用位图、poll 用数组，每次都要把整个 fd 集合从用户空间拷贝到内核空间，并在内核线性扫描所有 fd（还要用户程序遍历结果集合找就绪 fd），效率随 fd 数量线性下降 O(n)；epoll 底层用红黑树 + 双向链表，仅在第一次 epoll_ctl 时拷贝，内核通过回调机制直接把就绪 fd 放进一个就绪链表，epoll_wait 只需检查该链表是否为空并直接返回就绪的 fd 列表，用户无需遍历，效率近似常数 O(1)。所以 epoll 连接越多越体现优势，是 Linux 下高并发服务器（Nginx/Redis/Netty 等）基于的重要机制之一。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们线上用 epoll 的时候，连接数涨上去之后性能反而更好了，这跟 select 完全不一样，底层原理是啥？",
+    "expected_answer": "select 用位图、poll 用数组，每次都要把整个 fd 集合从用户空间拷贝到内核空间，并在内核线性扫描所有 fd（还要用户程序遍历结果集合找就绪 fd），效率随 fd 数量线性下降 O(n)；epoll 底层用红黑树 + 双向链表，仅在第一次 epoll_ctl 时拷贝，内核通过回调机制直接把就绪 fd 放进一个就绪链表，epoll_wait 只需检查该链表是否为空并直接返回就绪的 fd 列表，用户无需遍历，效率近似常数 O(1)。所以 epoll 连接越多越体现优势，是 Linux 下高并发服务器（Nginx/Redis/Netty 等）基于的重要机制之一。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "都说 JWT 安全，那它里面的内容是加密过的吗？我往 Payload 里塞个用户密码进去行不行？",
+    "expected_answer": "JWT 的 Payload 只是 Base64 编码，不是加密，任何人都能解码直接看到内容，所以绝不能存放密码等敏感信息（体现'反直觉'：看似安全实则明文可读）。JWT 是一个 Head.Payload.Signature 三段式结构。它确实无状态（服务器不存会话，靠共享 secret 验证签名即可在集群各节点独立完成校验、易水平扩展），但代价是无法主动作废、续签麻烦、体积较大。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "JWT 的 Payload 到底有没有加密？既然 JWT 号称安全，那我在里面放敏感数据应该没问题吧？",
+    "expected_answer": "JWT 的 Payload 只是 Base64 编码，不是加密，任何人都能解码直接看到内容，所以绝不能存放密码等敏感信息（体现'反直觉'：看似安全实则明文可读）。JWT 是一个 Head.Payload.Signature 三段式结构。它确实无状态（服务器不存会话，靠共享 secret 验证签名即可在集群各节点独立完成校验、易水平扩展），但代价是无法主动作废、续签麻烦、体积较大。",
+    "expected_source": "计算机网络.md",
+    "source_file": "计算机网络.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "不是说给进程多分几个物理页框，缺页中断就会变少吗？怎么有时候反而缺页更频繁了，这啥情况？",
+    "expected_answer": "这在特定置换算法下是真实存在、看似反直觉的：Belady 异常。FIFO 页面置换算法下，分配的物理帧数增加时，缺页率反而可能上升（比如某访问序列在 3 帧时缺页更少、4 帧时更多）；原因是 FIFO 机械地换出最早进入内存的页，可能换出一个很快就要再用的'老页面'。最优算法 OPT 无法实现，LRU 是 OPT 的良好近似但实现成本高，时钟算法（Clock）是 LRU 的廉价近似，广泛使用。因此分配帧数并非越多越好的直觉在某些算法下是错的。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "物理块给得越多缺页反而越严重，这不是违背常理吗，这种现象真的存在？",
+    "expected_answer": "这在特定置换算法下是真实存在、看似反直觉的：Belady 异常。FIFO 页面置换算法下，分配的物理帧数增加时，缺页率反而可能上升（比如某访问序列在 3 帧时缺页更少、4 帧时更多）；原因是 FIFO 机械地换出最早进入内存的页，可能换出一个很快就要再用的'老页面'。最优算法 OPT 无法实现，LRU 是 OPT 的良好近似但实现成本高，时钟算法（Clock）是 LRU 的廉价近似，广泛使用。因此分配帧数并非越多越好的直觉在某些算法下是错的。",
+    "expected_source": "操作系统.md",
+    "source_file": "操作系统.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java方法传参到底是值传递还是引用传递？如果说是传引用，那传的引用具体指的是什么？",
+    "expected_answer": "Java 只存在值传递（按值传递），没有引用传递；所谓'引用'传的是地址值，把对象的引用（地址值）复制一份传给方法参数，而不是把引用变量本身传过去。所以方法内修改形参指向另一个对象不会影响实参，但通过地址值修改对象内部字段会生效——这是 Java 初学者最容易踩、也最能体现'边界'认知的一个知识点。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "都说Java只有值传递，那传对象的时候到底传了个啥进去？那个'引用'到底是个什么东西？",
+    "expected_answer": "Java 只存在值传递（按值传递），没有引用传递；所谓'引用'传的是地址值，把对象的引用（地址值）复制一份传给方法参数，而不是把引用变量本身传过去。所以方法内修改形参指向另一个对象不会影响实参，但通过地址值修改对象内部字段会生效——这是 Java 初学者最容易踩、也最能体现'边界'认知的一个知识点。",
+    "expected_source": "Java基础.md",
+    "source_file": "Java基础.md",
+    "question_type": "d",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官常问，Java线程在底层跟操作系统的线程是怎么个映射关系？另外，听说早期JDK弄过那种不依赖系统的‘绿色线程’，后来怎么又给砍掉了？",
+    "expected_answer": "现代 HotSpot JVM 采用 1:1 线程模型：Java 线程（java.lang.Thread）本质是 JVM 对操作系统本地线程（Native Thread）的抽象封装，创建一个 Java 线程底层会调用 OS API 建一个内核级线程，线程调度完全委托给 OS 调度器（操作系统文档：线程是 CPU 调度的基本单位，切换涉及用户态/内核态）。早期的'绿色线程'是 M:1 模型，多个 Java 线程映射到一个 OS 线程，在用户空间由 JVM 自管理调度，创建/切换快，但有致命缺点：无法利用多核（同一时刻最多用一个 CPU 核心），且一个线程执行阻塞系统调用会阻塞整个 OS 线程与上面所有线程，所以 JDK 1.2 起放弃，转向 1:1。为缓解 1:1 下 OS 线程重量级（约 1MB 栈、内核切换开销大、数量有限）的问题，JDK21 引入虚拟线程（M:N 模型，由 JVM 调度，极其轻量）。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java里的线程底层到底是依赖系统线程还是自己调度的？我记得以前好像有个叫‘绿色线程’的东西，后来为啥废弃不用了？",
+    "expected_answer": "现代 HotSpot JVM 采用 1:1 线程模型：Java 线程（java.lang.Thread）本质是 JVM 对操作系统本地线程（Native Thread）的抽象封装，创建一个 Java 线程底层会调用 OS API 建一个内核级线程，线程调度完全委托给 OS 调度器（操作系统文档：线程是 CPU 调度的基本单位，切换涉及用户态/内核态）。早期的'绿色线程'是 M:1 模型，多个 Java 线程映射到一个 OS 线程，在用户空间由 JVM 自管理调度，创建/切换快，但有致命缺点：无法利用多核（同一时刻最多用一个 CPU 核心），且一个线程执行阻塞系统调用会阻塞整个 OS 线程与上面所有线程，所以 JDK 1.2 起放弃，转向 1:1。为缓解 1:1 下 OS 线程重量级（约 1MB 栈、内核切换开销大、数量有限）的问题，JDK21 引入虚拟线程（M:N 模型，由 JVM 调度，极其轻量）。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：Java里的CAS和数据库里的版本号机制都叫乐观锁，这俩在底层实现思路上到底有啥区别和联系啊？",
+    "expected_answer": "相同点在于思想：都假设冲突少，操作时不加锁，提交更新时才检查数据是否被改过；Java 用 CAS 原子指令（内存位置V、预期原值A、新值B，仅当 V==A 时更新为 B），数据库用版本号（UPDATE ... WHERE version=oldVersion，影响行数为0则失败重试）或 MVCC 快照。差异点：CAS 一次只能保证一个共享变量的原子性（ABA 问题需 AtomicStampedReference 版本戳解决，多变量需封装成对象用 AtomicReference），且高竞争下自旋空耗 CPU；数据库乐观锁在事务层、可针对整行整表做版本比对，保存了多个历史版本（MVCC）而非只比对当前值。适用上二者都适合读多写少场景（操作系统文档也定义了乐观锁：假设数据一般不冲突，提交更新时检查版本号或 CAS）。",
+    "expected_source": [
+      "JUC.md",
+      "MySQL.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你说说Java的CAS乐观锁跟数据库MVCC那种乐观锁，它俩底层的思想是一回事吗？具体有啥不一样？",
+    "expected_answer": "相同点在于思想：都假设冲突少，操作时不加锁，提交更新时才检查数据是否被改过；Java 用 CAS 原子指令（内存位置V、预期原值A、新值B，仅当 V==A 时更新为 B），数据库用版本号（UPDATE ... WHERE version=oldVersion，影响行数为0则失败重试）或 MVCC 快照。差异点：CAS 一次只能保证一个共享变量的原子性（ABA 问题需 AtomicStampedReference 版本戳解决，多变量需封装成对象用 AtomicReference），且高竞争下自旋空耗 CPU；数据库乐观锁在事务层、可针对整行整表做版本比对，保存了多个历史版本（MVCC）而非只比对当前值。适用上二者都适合读多写少场景（操作系统文档也定义了乐观锁：假设数据一般不冲突，提交更新时检查版本号或 CAS）。",
+    "expected_source": [
+      "JUC.md",
+      "MySQL.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问，Java里volatile是怎么做到让其他线程立刻看到变量修改的？这跟CPU的多级缓存机制有啥关系，JMM在中间是怎么起作用的？",
+    "expected_answer": "JMM（Java 内存模型）规定主内存与每个线程私有工作内存的交互：线程对变量的运算必须在工作内存进行，不能直接读写主内存；volatile 通过写后立即回写主内存 + 使其他线程工作内存中的缓存失效，从而保证可见性，并通过插入内存屏障禁止指令重排序保证有序性（Java 文档自述 volatile 主要保证可见性+有序性，不保证原子性）。从操作系统/硬件视角看，这对应 CPU 多级缓存与内存屏障：现代 CPU 用缓存行缓存数据、为提升流水线效率会指令重排，正是 JMM 用 volatile/内存屏障来对抗的那类优化问题。二者都需要'主存 vs 缓存副本'的一致性协议，JMM 是语言层抽象，Cache Coherence/内存屏障是硬件层实现。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "平时总说volatile能保证可见性，那从底层硬件来看，Java的JMM和CPU的缓存分层是怎么配合实现这个‘立刻可见’的？",
+    "expected_answer": "JMM（Java 内存模型）规定主内存与每个线程私有工作内存的交互：线程对变量的运算必须在工作内存进行，不能直接读写主内存；volatile 通过写后立即回写主内存 + 使其他线程工作内存中的缓存失效，从而保证可见性，并通过插入内存屏障禁止指令重排序保证有序性（Java 文档自述 volatile 主要保证可见性+有序性，不保证原子性）。从操作系统/硬件视角看，这对应 CPU 多级缓存与内存屏障：现代 CPU 用缓存行缓存数据、为提升流水线效率会指令重排，正是 JMM 用 volatile/内存屏障来对抗的那类优化问题。二者都需要'主存 vs 缓存副本'的一致性协议，JMM 是语言层抽象，Cache Coherence/内存屏障是硬件层实现。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：Redis明明是个单线程的，咋就能扛住那么多并发连接呢？你把它那个线程模型跟Java里的NIO、IO多路复用放一块儿对比对比，说说它俩底层到底有啥共通的地方呗。",
+    "expected_answer": "Redis 侧：数据在内存中 + 高效数据结构 + 单线程模型，单线程避免了加锁与线程上下文切换；Redis6 起网络 IO 拆多线程、后台任务（bgsave/lazyfree）用子线程（Redis.md）。系统性/Java 侧：都靠 IO 多路复用——操作系统用 select/poll/epoll 用少量线程同时监听海量 fd（epoll 回调只返回就绪 fd，O(1)），Java NIO 用 Selector+Channel+Buffer 实现同样的多路复用，Netty 等框架基于它（Java基础.md+操作系统.md）。共性本质：用少量线程处理大量连接，避免'一个连接一个线程'带来的内存（每线程 1MB 栈）和内核态上下文切换开销。",
+    "expected_source": [
+      "Redis.md",
+      "Java基础.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：都说Redis是单线程，那它是怎么做到同时处理海量连接的？你能结合它的线程模型，再对比下Java NIO或者多路复用，讲讲这俩在底层原理上是怎么殊途同归的吗？",
+    "expected_answer": "Redis 侧：数据在内存中 + 高效数据结构 + 单线程模型，单线程避免了加锁与线程上下文切换；Redis6 起网络 IO 拆多线程、后台任务（bgsave/lazyfree）用子线程（Redis.md）。系统性/Java 侧：都靠 IO 多路复用——操作系统用 select/poll/epoll 用少量线程同时监听海量 fd（epoll 回调只返回就绪 fd，O(1)），Java NIO 用 Selector+Channel+Buffer 实现同样的多路复用，Netty 等框架基于它（Java基础.md+操作系统.md）。共性本质：用少量线程处理大量连接，避免'一个连接一个线程'带来的内存（每线程 1MB 栈）和内核态上下文切换开销。",
+    "expected_source": [
+      "Redis.md",
+      "Java基础.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "数据库的死锁跟 Java 里的死锁有啥区别？触发条件和规避方法分别说说",
+    "expected_answer": "是同一个概念：两个及以上执行体因互占对方所需资源而无限期互相等待（操作系统与 JUC 文档都给出 Coffman 四必要条件：互斥、占有并等待、不可剥夺、循环等待，必须同时满足）。规避思路都在'破坏四个必要条件之一'：操作系统/并发侧重资源有序申请（给资源线性排序、强制按序申请，最常用）与带超时锁（tryLock）；数据库遇死锁除了同样靠合理设计，还靠检测与回滚（死锁检测、牺牲一个事务回滚）；Java 侧还用 ReentrantLock.tryLock(timeout) 破坏不可剥夺/循环等待，排查用 jstack。（JUC.md 的死锁小节与操作系统.md 的死锁小节内容一致，可互相印证。）",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "都说死锁，数据库里的死锁和 Java 多线程的死锁是一回事不？各自怎么产生的，又该怎么防？",
+    "expected_answer": "是同一个概念：两个及以上执行体因互占对方所需资源而无限期互相等待（操作系统与 JUC 文档都给出 Coffman 四必要条件：互斥、占有并等待、不可剥夺、循环等待，必须同时满足）。规避思路都在'破坏四个必要条件之一'：操作系统/并发侧重资源有序申请（给资源线性排序、强制按序申请，最常用）与带超时锁（tryLock）；数据库遇死锁除了同样靠合理设计，还靠检测与回滚（死锁检测、牺牲一个事务回滚）；Java 侧还用 ReentrantLock.tryLock(timeout) 破坏不可剥夺/循环等待，排查用 jstack。（JUC.md 的死锁小节与操作系统.md 的死锁小节内容一致，可互相印证。）",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "Java 线程不是有6种状态嘛，操作系统里进程也有自己的状态机，这俩是同一套东西吗？状态之间怎么转换的，有啥不一样？",
+    "expected_answer": "不是同一个模型，但有对应关系。Java 线程状态（Thread.State）：NEW/RUNNABLE/BLOCKED/WAITING/TIMED_WAITING/TERMINATED；其中 RUNNABLE 把操作系统的'就绪'与'运行'合并为一个状态，且 Java 不区分这两者。BLOCKED 专指等待监视器锁（synchronized），对应 JMM 的锁竞争；WAITING/TIMED_WAITING 对应 Object.wait()/Thread.join()/sleep 等主动让出执行权。操作系统文档给出的进程五状态（新建/就绪/运行/阻塞/终止）及切换，更细粒度区分'就绪'与'运行'（靠时间片/调度器轮转）。差异核心：Java 把锁等待(synchronized)单列为 BLOCKED，把其他让权(sleep/wait/join)统归 WAITING，而 OS 只用一个'阻塞'状态；且 Java RUNNABLE 含运行+就绪两态，OS 拆为两态。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "你们面试经常聊 Java 线程状态，那它跟操作系统层面的进程状态模型到底是不是一个概念？状态流转上有什么相同和不同的地方？",
+    "expected_answer": "不是同一个模型，但有对应关系。Java 线程状态（Thread.State）：NEW/RUNNABLE/BLOCKED/WAITING/TIMED_WAITING/TERMINATED；其中 RUNNABLE 把操作系统的'就绪'与'运行'合并为一个状态，且 Java 不区分这两者。BLOCKED 专指等待监视器锁（synchronized），对应 JMM 的锁竞争；WAITING/TIMED_WAITING 对应 Object.wait()/Thread.join()/sleep 等主动让出执行权。操作系统文档给出的进程五状态（新建/就绪/运行/阻塞/终止）及切换，更细粒度区分'就绪'与'运行'（靠时间片/调度器轮转）。差异核心：Java 把锁等待(synchronized)单列为 BLOCKED，把其他让权(sleep/wait/join)统归 WAITING，而 OS 只用一个'阻塞'状态；且 Java RUNNABLE 含运行+就绪两态，OS 拆为两态。",
+    "expected_source": [
+      "JUC.md",
+      "操作系统.md"
+    ],
+    "source_file": "JUC.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官问：Redis的AOF和MySQL的redo log都用了类似日志先写的机制来应对宕机，那它俩分别是靠什么手段来确保数据不丢的？",
+    "expected_answer": "共性：都通过先写日志（Write-Ahead，日志先行）保证崩溃后能恢复、不丢已提交的数据。Redis AOF：每执行一条写命令以追加方式写文件，回写策略 always/EverySec/no 控制写盘时机，文件过大用 aof 重写瘦身；数据丢失风险靠刷盘频率控制（都落盘就不丢）。MySQL（InnoDB redo log）：持久性靠 redo log 保证，先写重做日志再改数据页，崩溃后用 redo log 重放恢复；另外用 undo log 配 MVCC 保证原子性（回滚）与隔离性。差异：Redis AOF 记录的是命令级日志、粒度粗、可重放整个历史（重写瘦身）；MySQL redo log 记录物理页级变更、循环使用、粒度细、只在崩溃恢复期使用，正常时配合 buffer pool 的 checkpoint。",
+    "expected_source": [
+      "Redis.md",
+      "MySQL.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "都说Redis AOF和MySQL redo log是靠先写日志来做崩溃恢复的，你能具体说说这俩玩意儿各自是怎么做到宕机不丢数据的吗？",
+    "expected_answer": "共性：都通过先写日志（Write-Ahead，日志先行）保证崩溃后能恢复、不丢已提交的数据。Redis AOF：每执行一条写命令以追加方式写文件，回写策略 always/EverySec/no 控制写盘时机，文件过大用 aof 重写瘦身；数据丢失风险靠刷盘频率控制（都落盘就不丢）。MySQL（InnoDB redo log）：持久性靠 redo log 保证，先写重做日志再改数据页，崩溃后用 redo log 重放恢复；另外用 undo log 配 MVCC 保证原子性（回滚）与隔离性。差异：Redis AOF 记录的是命令级日志、粒度粗、可重放整个历史（重写瘦身）；MySQL redo log 记录物理页级变更、循环使用、粒度细、只在崩溃恢复期使用，正常时配合 buffer pool 的 checkpoint。",
+    "expected_source": [
+      "Redis.md",
+      "MySQL.md"
+    ],
+    "source_file": "Redis.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "面试官常问，Java 写高并发网络服务为啥首选 NIO 而不是老式的多线程 BIO 呀？你能结合操作系统的 IO 模型，再说说 Java NIO 里的那些组件，给我讲讲这里面的原因吗？",
+    "expected_answer": "BIO 是同步阻塞：一个线程阻塞等待一个连接（recvfrom 阻塞到数据拷贝完成），一个连接一个线程，线程是重量级资源（约 1MB 栈、内核态切换开销大），并发连接一多就内存/切换爆炸。NIO 是同步非阻塞 + IO 多路复用：用 Selector 把多个 Channel 注册上去，单线程/少量线程 select() 阻塞等待任意 Channel 就绪，就绪后再非阻塞读写，一个线程可管理成千上万连接（Java基础.md 的 NIO Selector/Channel/Buffer）。这与操作系统 IO 模型里的'IO 多路复用（select/poll/epoll）'是同一思想：把大量 socket 的监视权委托给内核，内核只返回真正就绪的 fd，避免对空闲连接无效轮询；Linux 底层就是 epoll（操作系统.md）。Netty 等框架正是基于 NIO+多路复用实现高并发。",
+    "expected_source": [
+      "Java基础.md",
+      "操作系统.md"
+    ],
+    "source_file": "Java基础.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  },
+  {
+    "question": "请教下，用 Java 搞高并发网络服务的时候，为什么大家都推荐 NIO 而不是传统的 BIO 加多线程模式？能不能结合操作系统的底层 IO 模型和 Java NIO 的具体组件帮我捋一捋？",
+    "expected_answer": "BIO 是同步阻塞：一个线程阻塞等待一个连接（recvfrom 阻塞到数据拷贝完成），一个连接一个线程，线程是重量级资源（约 1MB 栈、内核态切换开销大），并发连接一多就内存/切换爆炸。NIO 是同步非阻塞 + IO 多路复用：用 Selector 把多个 Channel 注册上去，单线程/少量线程 select() 阻塞等待任意 Channel 就绪，就绪后再非阻塞读写，一个线程可管理成千上万连接（Java基础.md 的 NIO Selector/Channel/Buffer）。这与操作系统 IO 模型里的'IO 多路复用（select/poll/epoll）'是同一思想：把大量 socket 的监视权委托给内核，内核只返回真正就绪的 fd，避免对空闲连接无效轮询；Linux 底层就是 epoll（操作系统.md）。Netty 等框架正是基于 NIO+多路复用实现高并发。",
+    "expected_source": [
+      "Java基础.md",
+      "操作系统.md"
+    ],
+    "source_file": "Java基础.md",
+    "question_type": "a",
+    "origin": "llm_extension"
+  }
+]
