@@ -13,7 +13,7 @@
 - 分层契约（各层负责什么 / 禁止什么）→ [app/api/API_LAYER.md](../../app/api/API_LAYER.md) · [app/services/SERVICES_LAYER.md](../../app/services/SERVICES_LAYER.md) · [app/storage/STORAGE_LAYER.md](../../app/storage/STORAGE_LAYER.md) · [app/utils/UTILS_LAYER.md](../../app/utils/UTILS_LAYER.md)
 - 开发 / 修复 / 实验 / 验收流程 → [PROCESS.md](../PROCESS.md)
 - 长期技术决策（DR）→ [DECISIONS.md](../DECISIONS.md)
-- 已知问题知识库 → [PROBLEM.md](../PROBLEM.md)
+- 已知问题注册表（索引 + 档案）→ [PROBLEM.md](../PROBLEM.md) · [docs/problems/](problems/)
 - 历史设计 spec / 实现计划 → [docs/superpowers/specs](superpowers/specs/) · [docs/superpowers/plans](superpowers/plans/)
 - 评估报告 → 按 `PROCESS.md` §3/§1 落盘到 `docs/evaluation/`（目录按需创建）
 - 部署与排障 → [docs/docker-deploy-notes.md](docker-deploy-notes.md)

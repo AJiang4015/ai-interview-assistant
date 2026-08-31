@@ -16,7 +16,7 @@
 | 任务怎么做 / 流程 / 实验 / 验收？ | `PROCESS.md` |
 | 为什么这么设计 / 长期决策？ | `DECISIONS.md`（DR-001…） |
 | 某层允许 / 禁止做什么？ | `app/*/ *_LAYER.md`（API / SERVICES / STORAGE / UTILS） |
-| 哪里有问题？ | `PROBLEM.md` |
+| 哪里有问题（注册表 / 索引）？ | `PROBLEM.md`（详细档案在 `docs/problems/`） |
 | 准备怎么改？ | `docs/superpowers/specs/` |
 | 改完实际怎么样？ | `docs/evaluation/` |
 
@@ -24,7 +24,7 @@
 
 ## 1. 硬规则（长期强制，违反即不正确）
 
-1. **开发 / Debug 前必读 `PROBLEM.md`**：先看 §0 Critical Do/Don't 与 §1 Problem Index，确认不踩已记录规则。
+1. **开发 / Debug 前必读 `PROBLEM.md`**：先看 §1 Problem Index 与 §4 高频规则，确认不踩已记录规则；重大问题的完整调查在 `docs/problems/`。
 2. **分层边界（Law of Layers）**：新增代码必须落在 `ARCHITECTURE.md` §4 与对应 `*_LAYER.md` 声明的层内，禁止跨层越界（API 不得直连 storage、storage 不得反向依赖 services、utils 不得依赖业务层）。
 3. **Layer 契约 DoD**：任何**跨层接口变更、新增模块依赖、异常抛出**的 PR，必须同步更新受影响 `*_LAYER.md`（尤其 Input/Output contract 与 Allowed dependencies），否则不满足 DoD；该规则常驻为 PR 验收项。
 4. **代码风格**：Python 3.10+，PEP 8（4 空格、行宽约 100），类 `PascalCase`、模块/函数/变量 `snake_case`、常量全大写；配置一律 `from app.config import settings`，禁止散落魔法常量。
@@ -37,7 +37,7 @@
 
 ## 2. 不可协商的三大铁律 ⛔（浓缩版 + 指向单一事实来源）
 
-> 事实与历史证据始终在 `PROBLEM.md`（§0a 铁律、§0 规则、Appendix 门禁）；本文件只保留最短强制摘要，**不得在此展开细节**，防止两处漂移。
+> 事实与历史证据始终在 `PROBLEM.md`（§4 高频规则、§5 Appendix 门禁）与 `docs/problems/` 档案；本文件只保留最短强制摘要，**不得在此展开细节**，防止两处漂移。
 
 - **⛔ 缓存键铁律（DR-004 / P001）**：`cache.make_key()` 只用原始问题原文，禁止混入 `session_id` / `msg_count` / `username` 等任何可变维度。
 - **⛔ 流式会话铁律（DR-005 / P002）**：SSE 处理中禁止修改 `state.sessionId`；内容容器动态获取；切换会话禁止 `abort()` 中断进行中的流。

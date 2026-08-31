@@ -28,4 +28,4 @@
 - 面试检索基线/复试：`scripts/eval_interview_{baseline,upgraded}.py`、`data/eval_interview_subset.json`
 - 评测报告：`docs/evaluation/*.json`
 - 技术决策：`DECISIONS.md`（DR-001~DR-010）
-- 已知问题：`PROBLEM.md`（P001/P002/P003… + Door 门禁）
+- 已知问题：`PROBLEM.md`（注册表：P001/P002/P003… + Door 门禁）+ `docs/problems/`（P001/P002/P003/P005/P006 完整档案）
