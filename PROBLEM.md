@@ -2,7 +2,8 @@
 
 > **定位：Problem Registry / Index，不是 Problem Encyclopedia。**
 > 本文件只负责问题的**注册、状态与导航**：ID、Severity、Status、一句话摘要、关联 DR / Spec / Test、修复证据与链接。
-> 重大 / 重要问题的完整调查过程（Investigation / Evidence / Root Cause / Solution / Regression / History）一律在 **`docs/problems/Pxxx-*.md`**，本文件**禁止复制完整正文**。> 适用项目：RAG 知识库 / Java 程序员智能面试助手（Interview RAG）。
+> 重大 / 重要问题的完整调查过程（Investigation / Evidence / Root Cause / Solution / Regression / History）一律在 **`docs/problems/Pxxx-*.md`**，本文件**禁止复制完整正文**。
+> 适用项目：RAG 知识库 / Java 程序员智能面试助手（Interview RAG）。
 
 ---
 
