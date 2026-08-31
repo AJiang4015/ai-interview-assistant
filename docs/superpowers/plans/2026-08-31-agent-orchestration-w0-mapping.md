@@ -102,7 +102,57 @@
 
 `interview_mode`(legacy|agent) · `agent_max_rounds`(15) · `agent_max_structured_retries`(3) · `agent_max_consecutive_failures`(3) · `agent_node_timeout_sec`(60) · `agent_max_transitions`(200) · `agent_max_reask_per_topic`(1) · `agent_followup_enabled`(true) · `agent_max_followup_depth`(1) · `agent_max_answer_chars`(2000) · `agent_max_context_chars`(4000) · `agent_trace_dir`(data/traces) · `agent_trace_retention`(200) · `agent_light_model`(qwen-turbo) · `agent_heavy_model`(qwen-plus) · `agent_parallel_candidates`(false)；`token_price` 增补 qwen-plus 单价。
 
-## 7. 状态
+## 7. 决策冻结（OPEN-1..6 已确认 + 三个补充发现）
 
-- ✅ 分支就绪；✅ 接口核对完成；✅ Spec→代码映射完成；✅ 前端契约确认（零改动）；❌ 未写任何业务代码。
-- **阻塞点**：§4 六个 OPEN 决策点需确认后进入 W1 Day 1。
+> 2026-08-31 用户逐项确认。以下约束为实现硬约束，写入 W1 实现。
+
+- **OPEN-1（已确认·镜像 legacy surface）**：AgentService 是 InterviewService 的替代实现；`interview_mode` 只负责 app.main lifespan 装配期选择；**不修改 app/api/interview.py**；Agent 核心逻辑只进 `app/services/agent/`；不复制 InterviewService/RAG/store/topic_tracker 逻辑；DI 复用 InterviewStore/TopicTracker/RetrievalFacade/LLMClient；Agent 不负责的方法经 adapter 兼容、不改 API contract。
+- **OPEN-2（已确认·LLMClient 最小扩展）**：`chat/chat_stream` 加可选 `model=None`（不传用 `self.model`，向后兼容）；`emit_cost` 记录实际模型名；不引入第二套 HTTP；不提前实现跨供应商；**ModelGateway 只做策略选择（light→turbo、heavy→plus），不得绕过 LLMClient**。
+- **OPEN-3（已确认·追问装入 answer 契约）**：W1 保留出题/评估/追问三角色；answer API 不新增字段；`next_question` 承载追问（同 round，复用 question_id 机制）；单问题最多 1 次 FOLLOWUP；禁止无限循环；逃生舱继续生效；不增加 Multi-Agent。
+- **OPEN-4（已确认·同题重评）**：补 `generate_next=false` 路径——对同一 question_id 重新评估、状态不推进。
+- **OPEN-5（已确认·source='followup'）**：见 §7.1 source 语义核对结论；followup 有独立 question_id；report/eval/coverage 统计过滤 followup；禁止计入主问题覆盖率。
+- **OPEN-6（已确认·报告自实现）**：SUMMARIZING 由 Agent 自实现报告生成（确定性聚合 + LLM 自然语言 + schema 校验 + G8 兜底），输出结构严格对齐 legacy 报告形状；**不调用 legacy `_generate_report` 私有方法**。
+
+### 7.1 补充发现 F7｜source 字段语义核对（OPEN-5 前置）
+
+- 现状：`interview_questions.source` 由 `_generate_question` 设置（`parsed.get("source", "llm")`，prompt 指示 kb/llm），`today` 用 `'today'`，`add_question` 默认 `'kb'`。
+- **全代码无任何逻辑按 source 值过滤/统计/报告**（grep 验证，仅展示性/记录性字段）。
+- 结论：语义 = "题目生成来源/类型"，扩展 `'followup'` 作为"追问类型标记"兼容；无存量逻辑依赖，**安全**。
+- 约束：followup 行有独立 question_id；`topic/category` 留空（coverage 天然跳过）；统计过滤见 §7.3。
+
+### 7.2 补充发现 F8｜total_score 双重口径（影响画像正确率与对照评测，需冻结）
+
+| 层 | 计算 | 前端展示 |
+|---|---|---|
+| 存储层 `interview_sessions.total_score` | **SUM(score)**（interview_store.update_answer L150-157） | history 列表"总分"（app.js L2318/2375） |
+| 报告层 `report.total_score` | **AVG(score)**（_generate_report L735/774，round 1 位） | 报告"报告总分"（app.js L2104/2473） |
+
+- **风险**：SUM 随题数膨胀，跨场次不可比；若画像"历史正确率"或对照评测误用 SUM，结论失真。
+- **冻结建议（待确认）**：
+  1. 画像历史正确率 = **近 N 次单题分均值**（N=10，跨场次按时间倒序，过滤 followup；兜底规则分计入并打标）；
+  2. agent `report.total_score` = **均分**（与 legacy 报告口径一致，前端展示不变）；
+  3. 对照评测**不依赖 total_score 字段**：用 recall@3/MRR（检索）+ 单题分分布（过滤 followup）+ 追问合理性人工分；
+  4. `session.total_score`（SUM）仅保留作 legacy 展示兼容，agent 不据此做任何决策。
+
+### 7.3 补充发现 F9｜只读端点职责归属 + 存量最小扩展点（待确认）
+
+**职责归属**（用户要求核查）：
+
+| 方法 | 归属 | 实现方式 |
+|---|---|---|
+| `start` / `answer` / `end` | **Agent 核心职责** | AgentService 自实现（状态机） |
+| `get_report` / `get_detail` / `history` | 纯读 facade | AgentService 直读注入的 store（各数行，无业务逻辑复制） |
+| `coverage`（属性访问） | 读 facade | AgentService 暴露 `store`/`topic_tracker` 属性，API 层直接访问（不改） |
+| `stats` | 确定性聚合 facade | **委托** legacy 实例公开方法（不复制 60 行聚合逻辑） |
+| `today` | 独立产品功能（非面试状态机） | **委托** legacy 实例公开方法 |
+
+**存量最小扩展点（agent-dev 上向后兼容改动，与 OPEN-2 同类，待确认）**：
+1. `LLMClient.chat/chat_stream(model=None)` —— OPEN-2 已确认。
+2. `InterviewService.stats(..., exclude_sources=None)` 与 `TopicTracker.get_coverage(..., exclude_sources=None)`：默认 None 不过滤（legacy 行为不变），agent 模式传 `('followup',)`。若无此扩展，followup 行的 score 会被 stats 计入（污染薄弱点画像）、topic 会被 coverage 计入（污染覆盖率）——违反 OPEN-5 约束 3/4。
+   - 替代方案（零存量改动）：followup 行不写 `answer`/`score`（stats 按 `answer==''` 跳过、coverage 按空 topic 跳过），追问链从 evaluation 字段取——但会丢失"追问回答"入库语义，且 `get_current_question`（answer='' 判未答）语义被污染。**不推荐**。
+
+## 8. 状态
+
+- ✅ 分支就绪；✅ 接口核对；✅ Spec→代码映射；✅ 前端契约（零改动）；✅ OPEN-1..6 已确认冻结；❌ 未写任何业务代码。
+- **待确认**：F8 total_score 口径冻结建议 + F9 存量最小扩展点（stats/get_coverage source 过滤）。
+- **确认后进入 W1 Day 1**。
