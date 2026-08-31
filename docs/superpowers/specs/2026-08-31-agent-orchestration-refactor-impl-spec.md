@@ -20,6 +20,8 @@
 - **B2**：`interview_mode` 在 `app.main` 装配期工厂选 legacy/agent 实现，复用 start/answer/end/report 契约，默认零前端改动。
 - **B6/B11/B12**：工具契约 + 复用清单 + trace 落盘细节见附录 F/E/H。
 
+**W0 决策冻结（2026-08-31，详见 `docs/superpowers/plans/2026-08-31-agent-orchestration-w0-mapping.md`）**：OPEN-1..6 与补充发现 F7/F8/F9 全部确认。总原则（用户定调）：**Agent 可以新增语义，但尽量不破坏已有数据模型与 API；需要兼容时通过小的、默认行为不变的扩展点解决。** 接口约束已并入对应附录（E1/E5/E6、A6、F、I）。
+
 ---
 
 ## 2. JD 能力要求拆解与覆盖映射（3 份 JD 合并）
@@ -141,6 +143,18 @@
 - 存量：检索侧多路并行（FAISS 稠密 + 稀疏，RRF 融合）——已实现，直接作为证据。
 - 编排侧：`parallel_candidates` 配置（默认 `false`）。开启时出题节点并行生成 2 候选题（成本 ×2）确定性选优（schema 校验 + 去重 + 与画像匹配度）。仅 W3 富余时演示，默认关。
 
+### A6. answer 契约映射（OPEN-3/4 冻结）
+
+状态机阶段必须装入 legacy `answer` 响应契约（前端只消费 `evaluation` + `next_question` + `is_complete`，不新增字段）：
+
+- **追问触发时（G9 命中）**：
+  - 主答提交 → 评估官对主答评估 → 返回 `{evaluation(主答评估), is_complete:false, next_question: <追问题, 同 round, source='followup'>, session_id}`；主答行写库（evaluation=主答评估）。
+  - 追问答提交 → 评估官对追问链做**合并最终评估** → 返回 `{evaluation(最终评估), is_complete:false, next_question: <下一主题题, round+1>, session_id}`；追问行写库（source='followup'，topic/category 留空），主答行更新为最终评估。
+- **追问未触发（¬G9）**：主答提交 → 评估 → `{evaluation, is_complete?, next_question: <下一题> | report}`，与 legacy 单次往返一致。
+- **同题重评（OPEN-4，前端"再答一次"传 `generate_next=false`）**：对同一 question_id 重新执行评估节点，状态不推进（不产生下一题），返回 `{evaluation(新评估), is_complete:false, next_question:null}`。
+- **单问题最多 1 次 FOLLOWUP**（G9 深度上限=1，与逃生舱配合，禁止无限循环）。
+- 前端视角：一轮可能呈现"评价 → 下一题（追问）→ 评价 → 下一题"，无需任何前端改动。
+
 ---
 
 ## 4. 技术附录 B — Phase Gate（门禁）
@@ -218,19 +232,25 @@ app/services/agent/
 
 ## 7. 技术附录 E — Interface Contract
 
-### E1. `AgentService`（与 legacy `InterviewService` 同构，`app.main` 装配工厂二选一，API 层零改动）
+### E1. `AgentService`（OPEN-1 冻结：镜像 legacy 完整 surface，`app.main` 装配工厂二选一，API 层与前端零改动）
 
 ```python
-# 契约（伪签名，非实现）
-async def start(user_id, position, resume_text=None) -> SessionStart
-async def answer(user_id, session_id, answer_text) -> AgentTurn      # 含 state/payload
-async def end(user_id, session_id) -> SessionReport
-async def get_report(user_id, session_id) -> SessionReport
-async def get_state(user_id, session_id) -> SessionState             # 断点恢复用
-
-SessionStart  = {session_id, question, difficulty, knowledge_tags, state}
-AgentTurn     = {state, payload: Question | FollowUp | Evaluation+Next | Report, fallback_flags[]}
+# 契约（伪签名，非实现）—— 与 legacy InterviewService 对外方法一一对应
+async def start(position, username="", resume_file=None, jd_text=None) -> {session_id, question}
+async def answer(question_id, answer, generate_next=True, username=None) -> {evaluation, is_complete, report?, next_question?, session_id}
+async def end(session_id, username=None) -> {session_id, report}
+async def get_report(session_id, username=None) -> Optional[dict]     # 只读，不触发 LLM
+def get_detail(session_id, username=None) -> Optional[dict]           # 纯读取
+def history(username=None, limit=20) -> list[dict]
+def stats(username=None) -> dict                                      # 见 E6（exclude_sources）
+async def today(username=None, position=None) -> dict                 # 独立产品功能，委托 legacy
+# 属性（API 层 coverage 端点直接访问，必须暴露）
+store: InterviewStore;  topic_tracker: TopicTracker
 ```
+
+- 职责归属（F9）：`start/answer/end` = Agent 核心（状态机自实现）；`get_report/get_detail/history` = 直读 store（数行，无业务复制）；`stats/today` = **委托注入的 legacy 实例公开方法**（不复制逻辑）；`coverage` = 属性暴露。
+- `answer` 按 `question_id` 定位（非 session_id）；`generate_next=False` 走同题重评路径（OPEN-4，见 A6）。
+- `start` 沿用 multipart 语义：可选 resume/JD 解析复用 `ResumeParser`（存量，不重写），分析结果注入首题上下文。
 
 ### E2. 节点执行契约（Role Node）
 
@@ -269,6 +289,19 @@ generate(TaskSpec) -> GenerationResult{text, model, cost, retries, latency_ms}
 - 降级链：`qwen-plus` → `qwen-turbo` → （接口预留第三供应商，当前抛确定性兜底）。
 - 成本：经 `monitor` → `session_cost`（存量接线，免费复用）；`token_price` 增加 `qwen-plus` 单价（config 变更项）。
 - 供应商适配器接口 `ProviderAdapter`（chat/chat_stream/成本），Bailian 为唯一实现，跨供应商延后（B5）。
+- **OPEN-2 冻结约束**：`model_gateway` **不得绕过 LLMClient**、不引入第二套 HTTP 逻辑。LLMClient 做最小向后兼容扩展：`chat(prompt, system=None, session_id=None, model=None)` / `chat_stream(...)` 增加可选 `model` 参数，不传用 `self.model`（存量调用方零改动）；`monitor.emit_cost` 上报**实际使用的模型名**。model_gateway 仅负责策略选择（light→turbo、heavy→plus）与降级链。
+
+### E6. 画像与报告口径（F8 冻结）与统计过滤扩展点（F9 冻结）
+
+**F8 口径（写入 profile_store / report / evaluation 契约）**：
+- **画像历史正确率** = 最近 10 次**主问题**单题评估分均值（跨场次按时间倒序，`source='followup'` 不计入；G4-F 兜底规则分**计入**但记录必须带 `fallback` 标记）。每次会话结束（SUMMARIZING）按此口径更新 profile。
+- **agent `report.total_score`** = 本次会话主问题单题分**均值**（与 legacy 报告口径一致，前端展示不变；保留 `session.total_score`(SUM) 仅作 history 展示兼容，agent 不据此做任何决策）。
+- **对照评测不依赖 total_score 字段**：主要指标 = 单题分分布（过滤 followup）+ recall@3 + MRR + 人工追问合理性 + trace 流程断言（见附录 I）。
+
+**F9 存量最小扩展点（agent-dev 上向后兼容，默认行为不变）**：
+- `InterviewService.stats(..., exclude_sources=None)`：`None` = legacy 行为不变；agent 模式传 `("followup",)`。
+- `TopicTracker.get_coverage(..., exclude_sources=None)`（及内部统计路径）：同上。
+- 约束：不新增 `is_followup` 字段；不改 schema；legacy 模式完全不受影响；followup 仍作为独立 question/answer 落库（F1）。
 
 ---
 
@@ -296,6 +329,15 @@ ToolRegistry: register(name, tool) / get(name) / list()   # 幂等注册，纯�
 | `eval_rules` | {score, hit_ratio, reask_allowed} | {action, delta} | **规则校验 + 参数汇算示例**（G5 的载体） |
 
 工具执行超时走 `timeout_sec`；异常按 `error_policy` 处理（进降级矩阵）。MCP 化（W2）：`kb_retrieve` + `mock_resume` 注册为 MCP 工具，本地注册表保留为降级路径（W1 形态即降级形态）。
+
+### F1. 问题 `source` 取值语义（F7/OPEN-5 冻结）
+
+- 存量语义（已核对，全代码无逻辑依赖 source 值）：`kb`（知识库出题）/ `llm`（纯 LLM 出题，LLM 自选）/ `today`（今日一题）。
+- **扩展取值 `followup`**（追问类型标记）：不新增字段、不改 schema（F9 约束）。followup 问题行约束：
+  - 有**独立 question_id**（复用 `InterviewStore.add_question`）；
+  - `topic`/`category` 留空（`TopicTracker.get_coverage` 天然跳过空值，不污染覆盖率）；
+  - 完整写入 question/answer/evaluation/score（不破坏 question_id/answer/report/trace 语义）；
+  - 主问题统计、coverage、profile accuracy、report 均**过滤 `source='followup'`**（见 E6 与 G8）。
 
 ---
 
@@ -354,7 +396,7 @@ ToolRegistry: register(name, tool) / get(name) / list()   # 幂等注册，纯�
 - 全流程：INIT→…→END 状态序合法；每条降级分支注入故障后仍达 END；trace 文件生成且字段完整。
 
 **E3 真实 LLM 评测（对照跑数，`data/eval_interview_subset.json` 17 条）**
-- legacy vs agent 各跑一遍，指标：recall@3 / MRR（复用 `eval_metrics`）+ 人工抽样 5 条"追问合理性"（≥4/5 通过）。
+- legacy vs agent 各跑一遍，指标（**不依赖 total_score 字段，F8**）：单题分分布（均值/方差，过滤 followup）+ recall@3 / MRR（复用 `eval_metrics`）+ 人工抽样 5 条"追问合理性"（≥4/5 通过）。
 - **trace 断言（B9）**：① 状态流转合法率 100%（trace 转移序列 ⊆ 转移表）；② 重试次数字段非空且 ≤ 上限；③ schema 失败→兜底被触发有记录；④ 工具调用耗时非空；⑤ escape_reason 记录与逃生舱触发一致。
 - 报告落 `docs/evaluation/`，先报告后结论（PROCESS §1）。
 
