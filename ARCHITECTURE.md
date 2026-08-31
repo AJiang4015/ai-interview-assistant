@@ -40,7 +40,7 @@
 | HTTP | httpx（调 LLM / Embedding / Rerank API）、tenacity（重试） |
 | 流式协议 | **SSE**：事件 `session / retrieval / token / done / error`（DR-005 / P002） |
 | 可观测性 | OpenTelemetry（OTLP，`otel_enabled` 开关）+ Prometheus 风格 metrics（monitor）；Grafana + docker-compose（`docs/observability/`） |
-| Agent 编排（进行中） | 确定性状态机（`app/services/agent/state_machine.py`）+ trace 归因记录器；规划：结构化输出重试 / MCP 工具 / model_gateway 分级（见 `2026-08-31-agent-orchestration-refactor-impl-spec.md`） |
+| Agent 编排（进行中） | 确定性状态机（`app/services/agent/state_machine.py`）+ trace 归因 + 三角色 + 结构化输出重试 + 本地工具注册表（`tools.py`）+ ProfileStore（已落地，W1 Day 1–3）；规划：MCP 工具 / model_gateway 分级（W2）（见 `2026-08-31-agent-orchestration-refactor-impl-spec.md`） |
 | 测试 | pytest（`tests/`） |
 | 前端 | 原生 HTML + CSS + JS；CDN 引入 marked + highlight.js + DOMPurify（安全链 DR-009 / P005） |
 
@@ -142,7 +142,7 @@ app/
 │   ├── cache_service（DR-004）· auth_service · rate_limiter · session_cost · monitor · eval_monitor
 │   ├── interview_service(legacy) · interview_agent · deep_dive_service · resume_parser · topic_tracker
 │   ├── evaluation_service · eval_testset · eval_metrics
-│   └── agent/        （主线）state_machine · trace（W1 已落地）；roles/structured_output/tools/orchestrator/model_gateway（W1–W2 规划）
+│   └── agent/        （主线）state_machine · trace · roles · structured_output · tools · profile_store（W1 Day 1–3 已落地）；orchestrator / agent_service / model_gateway / mcp（W1–W2 规划）
 ├── storage/          faiss_store · doc_store · session_store(Redis) · user_store · search_store(SQLite) · interview_store · deep_dive_store
 └── utils/            logger · text_splitter
 
