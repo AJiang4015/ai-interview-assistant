@@ -122,6 +122,8 @@ data/search.db
 data/bm25_index.pkl
 data/bm25_index.pkl.fts.sqlite
 data/ingest_state.json
+# Agent W1 smoke runtime output (scripts/agent_w1_smoke.py)
+data/agent_smoke/
 
 # Local tooling (agent/ssh helper scripts)
 .tools/
