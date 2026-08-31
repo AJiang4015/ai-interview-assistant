@@ -219,6 +219,8 @@ async def lifespan(app: FastAPI):
             followup_enabled=settings.agent_followup_enabled,
             max_followup_depth=settings.agent_max_followup_depth,
             max_answer_chars=settings.agent_max_answer_chars,
+            light_model=settings.agent_light_model,
+            heavy_model=settings.agent_heavy_model,
         )
     else:
         interview_service = legacy_interview_service

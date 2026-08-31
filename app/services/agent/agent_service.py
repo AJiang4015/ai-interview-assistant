@@ -163,10 +163,15 @@ def build_agent_service(
     followup_enabled: Optional[bool] = None,
     max_followup_depth: Optional[int] = None,
     max_answer_chars: Optional[int] = None,
+    light_model: str = "qwen-turbo",
+    heavy_model: str = "qwen-plus",
+    use_gateway: bool = True,
 ) -> AgentService:
     """app.main 装配工厂（agent 模式）：显式 DI 组装 orchestrator + tools + service。
 
     本工厂不 import settings（保持可测）；settings 值由调用方（app.main）传入。
+    ``use_gateway=True``（默认，spec E5）：经 ModelGateway 分级调用
+    （light→turbo / heavy→plus / plus→turbo 降级），仍通过 LLMClient，无第二套 HTTP。
     """
     profile_store = profile_store or SessionProfileStore()
     agent_tracker = AgentTopicTracker(interview_store=store)
@@ -178,14 +183,31 @@ def build_agent_service(
 
     escape = EscapeHatch(escape_config or EscapeHatchConfig())
 
-    async def llm_call(prompt: str, system: Optional[str] = None) -> str:
-        return await llm.chat(prompt, system=system)  # type: ignore[attr-defined]
+    if use_gateway:
+        from app.services.agent.model_gateway import LEVEL_HEAVY, LEVEL_LIGHT, ModelGateway, TaskSpec
+
+        gateway = ModelGateway(llm, light_model=light_model, heavy_model=heavy_model)
+
+        async def llm_call(prompt: str, system: Optional[str] = None) -> str:
+            result = await gateway.generate(TaskSpec(role_level=LEVEL_HEAVY, prompt=prompt, system=system))
+            return result.text
+
+        async def llm_call_light(prompt: str, system: Optional[str] = None) -> str:
+            result = await gateway.generate(TaskSpec(role_level=LEVEL_LIGHT, prompt=prompt, system=system))
+            return result.text
+    else:
+
+        async def llm_call(prompt: str, system: Optional[str] = None) -> str:
+            return await llm.chat(prompt, system=system)  # type: ignore[attr-defined]
+
+        llm_call_light = None
 
     orchestrator = AgentOrchestrator(
         machine=StateMachine(),
         tools=registry,
         store=store,
         llm_call=llm_call,
+        llm_call_light=llm_call_light,
         escape_hatch=escape,
         trace_dir=trace_dir,
         trace_retention=trace_retention,

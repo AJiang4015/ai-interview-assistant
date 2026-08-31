@@ -77,7 +77,7 @@ class _ScriptedLLM:
         self.question_calls = 0
         self.question_note = question_note
 
-    async def chat(self, prompt, system=None):
+    async def chat(self, prompt, system=None, session_id=None, model=None):
         if '"followup_question"' in prompt:
             return self.followup if self.followup is not None else DEFAULT_FOLLOWUP
         if '"score_reason"' in prompt:
@@ -183,6 +183,11 @@ async def scenario_schema_retry() -> None:
 
 async def scenario_real_client() -> None:
     print("\n== 4. 真实 LLMClient（密钥 401）→ 失败重试 → 确定性兜底 → 流程完成 ==")
+    import os
+
+    if "BAILIAN_API_KEY" in os.environ:
+        print("  SKIP: 已注入有效 key（真实调用会成功），本退化场景仅适用于无 key 环境")
+        return
     store = _new_store("real")
     llm = LLMClient()  # 真实客户端：401 → generate_structured 内 3 次尝试失败 → fallback
     svc = _build(store, _EmptyFacade(), llm, EscapeHatchConfig(max_rounds=1), TRACE_DIR)
@@ -197,6 +202,11 @@ async def scenario_real_client() -> None:
 
 async def scenario_escape() -> None:
     print("\n== 5. 逃生舱（max_consecutive_failures=1 + LLM 失败）→ SUMMARIZING → END ==")
+    import os
+
+    if "BAILIAN_API_KEY" in os.environ:
+        print("  SKIP: 已注入有效 key，本退化场景仅适用于无 key 环境")
+        return
     store = _new_store("escape")
     llm = LLMClient()
     svc = _build(store, _EmptyFacade(), llm, EscapeHatchConfig(max_rounds=5, max_consecutive_failures=1), TRACE_DIR)
@@ -220,6 +230,42 @@ def verify_trace() -> None:
     check("trace 7 类事件齐全", not missing, f"missing={sorted(missing)}" if missing else f"total={total} events")
 
 
+async def scenario_real_llm() -> None:
+    """真实 LLM 生成（需运行环境注入 Machine 级 BAILIAN_API_KEY，否则 SKIP）。
+
+    运行方式（不落盘、不提交 key）：
+        $env:BAILIAN_API_KEY = [Environment]::GetEnvironmentVariable('BAILIAN_API_KEY','Machine')
+        python scripts/agent_w1_smoke.py
+    经 ModelGateway 分级（light→qwen-turbo / heavy→qwen-plus，plus 失败自动降 turbo）。
+    """
+    import os
+
+    print("\n== 7. 真实 LLM 生成（需注入 Machine 级 BAILIAN_API_KEY）==")
+    if "BAILIAN_API_KEY" not in os.environ:
+        print("  SKIP: BAILIAN_API_KEY 未注入当前进程（DSH 沙箱过滤了敏感 env 继承）")
+        return
+    store = _new_store("real_llm")
+    svc = _build(store, _EmptyFacade(), LLMClient(), EscapeHatchConfig(max_rounds=2), TRACE_DIR)
+    res = await svc.start("Java后端", username="smoke")
+    check("真实出题（G1 门禁通过）", bool(res["question"]["content"]))
+    ans1 = await svc.answer(res["question"]["id"], "短答触发真实追问", username="smoke")
+    nq = ans1.get("next_question")
+    if nq and nq.get("source") == "followup":
+        ans2 = await svc.answer(
+            nq["id"], "追问回答：因为分段锁粒度粗、锁竞争激烈，而 synchronized 锁单个桶节点即可",
+            username="smoke",
+        )
+        check("真实评估（score 1-10）", 1 <= ans2["evaluation"]["score"] <= 10)
+        nq2 = ans2.get("next_question")
+        if nq2:
+            ans3 = await svc.answer(nq2["id"], "第二轮回答，内容足够长避免追问：" + "r" * 300, username="smoke")
+            check("真实闭环（is_complete + report）", ans3["is_complete"] is True and ans3["report"].get("total_score") is not None)
+    else:
+        check("短答触发真实追问", False, "未触发追问")
+    ev = _trace_events(res["session_id"])
+    check("真实链路 trace 含 node_finished", any(e["event"] == "node_finished" for e in ev))
+
+
 async def main() -> None:
     TRACE_DIR.mkdir(parents=True, exist_ok=True)
     verify_assembly()
@@ -227,6 +273,7 @@ async def main() -> None:
     await scenario_schema_retry()
     await scenario_real_client()
     await scenario_escape()
+    await scenario_real_llm()
     verify_trace()
     failed = [r for r in RESULTS if r.startswith("[FAIL]")]
     print(f"\n===== W1 Day 5 冒烟结果：{len(RESULTS) - len(failed)}/{len(RESULTS)} PASS =====")

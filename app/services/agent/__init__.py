@@ -17,6 +17,16 @@ from app.services.agent.fallback import (
     generate_summary,
     rule_score,
 )
+from app.services.agent.mcp_client import McpClientAdapter, attach_mcp_tools, build_mcp_server
+from app.services.agent.model_gateway import (
+    LEVEL_HEAVY,
+    LEVEL_LIGHT,
+    BailianAdapter,
+    GenerationResult,
+    ModelGateway,
+    ProviderAdapter,
+    TaskSpec,
+)
 from app.services.agent.orchestrator import AgentOrchestrator, SessionContext
 from app.services.agent.profile_store import EMPTY_PROFILE, ProfileStore, SessionProfileStore
 from app.services.agent.roles import (
@@ -93,6 +103,18 @@ __all__ = [
     "rule_score",
     "deterministic_summary",
     "generate_summary",
+    # mcp_client
+    "McpClientAdapter",
+    "attach_mcp_tools",
+    "build_mcp_server",
+    # model_gateway
+    "LEVEL_HEAVY",
+    "LEVEL_LIGHT",
+    "BailianAdapter",
+    "GenerationResult",
+    "ModelGateway",
+    "ProviderAdapter",
+    "TaskSpec",
     # state_machine
     "AgentEvent",
     "AgentState",

@@ -115,11 +115,13 @@ class AgentOrchestrator:
         followup_enabled: bool = True,
         max_followup_depth: int = 1,
         max_answer_chars: int = 2000,
+        llm_call_light: Optional[Callable[..., Awaitable[str]]] = None,
     ):
         self._machine = machine
         self._tools = tools
         self._store = store
-        self._llm_call = llm_call
+        self._llm_call = llm_call  # heavy（评估/报告）默认
+        self._llm_call_light = llm_call_light  # light（出题/追问），由 model_gateway 提供（E5）
         self._escape = escape_hatch
         self._trace_dir = str(trace_dir)
         self._trace_retention = trace_retention
@@ -391,16 +393,21 @@ class AgentOrchestrator:
         model_cls: type,
         started: float,
         fallback_label: str,
+        level: str = "heavy",
     ) -> StructuredResult:
         """角色节点执行（薄组合）：generate_structured + trace node_started/node_finished。
 
         LLM 调用/网络异常（spec G 矩阵「LLM 调用失败」）→ 包装为 fallback 结果，
         由各节点按既有 fallback 逻辑走确定性兜底（G1-F / G1-f / G4-F）。
+        ``level``（E5 接线）："light"（出题/追问）→ llm_call_light（turbo），否则 heavy（plus）。
         """
+        llm_call = self._llm_call
+        if level == "light" and self._llm_call_light is not None:
+            llm_call = self._llm_call_light
         self._record(ctx, event="node_started", node=node, role=role)
         try:
             result = await generate_structured(
-                self._llm_call, prompt, model_cls.model_json_schema(), model_cls, system=system,
+                llm_call, prompt, model_cls.model_json_schema(), model_cls, system=system,
             )
         except Exception as e:  # noqa: BLE001 —— LLM 失败 → 降级矩阵：节点确定性兜底
             result = StructuredResult(ok=False, attempts=1, errors=[f"llm_call failed: {e}"], fallback=True)
@@ -445,7 +452,7 @@ class AgentOrchestrator:
         result = await self._run_role_node(
             ctx, node="questioner", role="出题人", system=QUESTIONER_SYSTEM,
             prompt=prompt, model_cls=Question, started=started,
-            fallback_label="question_fallback",
+            fallback_label="question_fallback", level="light",
         )
         if result.fallback:
             ctx.consecutive_failures += 1
@@ -474,7 +481,7 @@ class AgentOrchestrator:
         result = await self._run_role_node(
             ctx, node="followuper", role="追问者", system=FOLLOWUPER_SYSTEM,
             prompt=prompt, model_cls=FollowUp, started=started,
-            fallback_label="followup_skipped",
+            fallback_label="followup_skipped", level="light",
         )
         if result.fallback:
             ctx.consecutive_failures += 1

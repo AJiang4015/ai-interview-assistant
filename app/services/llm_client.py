@@ -19,14 +19,19 @@ class LLMClient:
         self.temperature = settings.llm_temperature
         self.timeout = settings.request_timeout
 
-    async def chat(self, prompt: str, system: str | None = None, session_id: str | None = None) -> str:
+    async def chat(self, prompt: str, system: str | None = None, session_id: str | None = None,
+                   model: str | None = None) -> str:
+        """Chat completion (non-streaming).
+
+        ``model``（OPEN-2 冻结）：可选按调用覆盖模型；不传用 ``self.model``（存量行为不变）。
+        """
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": messages,
             "temperature": self.temperature
         }
@@ -44,15 +49,19 @@ class LLMClient:
         except Exception as e:
             raise LLMAPIError(f"LLM chat failed: {e}") from e
 
-    async def chat_stream(self, prompt: str, system: str | None = None, session_id: str | None = None):
-        """Stream chat completions, yielding text chunks as they arrive."""
+    async def chat_stream(self, prompt: str, system: str | None = None, session_id: str | None = None,
+                          model: str | None = None):
+        """Stream chat completions, yielding text chunks as they arrive.
+
+        ``model``（OPEN-2 冻结）：可选按调用覆盖模型；不传用 ``self.model``（存量行为不变）。
+        """
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": messages,
             "temperature": self.temperature,
             "stream": True,
@@ -82,7 +91,7 @@ class LLMClient:
                 data = response.json()
                 usage = data.get("usage", {})
                 monitor.emit_cost(
-                    self.model,
+                    payload.get("model", self.model),  # OPEN-2：成本按实际使用的模型名记录
                     in_n=usage.get("prompt_tokens", 0),
                     out_n=usage.get("completion_tokens", 0),
                     session_id=session_id or "unknown",
@@ -118,7 +127,7 @@ class LLMClient:
                             except json.JSONDecodeError:
                                 logger.warning(f"Failed to parse stream data: {data_str[:100]}")
             monitor.emit_cost(
-                self.model,
+                payload.get("model", self.model),  # OPEN-2：成本按实际使用的模型名记录
                 in_n=prompt_tokens_total,
                 out_n=completion_tokens_total,
                 session_id=session_id or "unknown",

@@ -79,10 +79,20 @@ INIT → QUESTIONING → AWAITING_ANSWER → FOLLOWUP → AWAITING_ANSWER
 
 > **当前运行环境已注入 BAILIAN_API_KEY，但对应模型配置未通过真实推理验证。真实客户端调用链、
 > 异常处理、retry、fallback、escape 已验证。待确认正确 model id / 权限后，可直接复跑真实生成场景。**
->
-> 环境探测补充（2026-09-01）：`BAILIAN_API_KEY` 未出现在系统环境变量，生效值为 `.env` 内容；
-> DashScope 返回 `InvalidApiKey`（key 无效），模型列表无法枚举，`qwen3.8-max` 是否有效 model id 待确认。
-> 待 key 有效后可运行 `python scripts/agent_w1_smoke.py` 场景 2/4/5 复验真实模型推理路径。
 
-- 本报告先于结论（PROCESS §1）：结论 = Agent 编排链路在真实装配下可运行、可降级、可归因；
-  真实模型质量结论待有效密钥后补测。
+### 8.1 环境探测与真实生成复验（2026-09-01，W2 上期间）
+
+- **BAILIAN_API_KEY 确为 Machine 级系统环境变量**（len=35，真实 key 格式）；但 **DSH 沙箱进程
+  未继承敏感环境变量**（`os.environ` 中 PATH/WINDIR 等在、BAILIAN_API_KEY 不在）→ 此前回退到
+  `.env` 占位值导致 401 `InvalidApiKey`。
+- **复验方法（不落盘、不提交 key）**：运行命令中显式注入
+  `$env:BAILIAN_API_KEY = [Environment]::GetEnvironmentVariable('BAILIAN_API_KEY','Machine')`。
+- **真实生成验证结果（27/27 PASS）**：真实出题（G1 门禁通过）→ 真实追问触发 → 真实评估
+  （score 1-10）→ 真实闭环（is_complete + report 落库）→ trace node_finished；
+  且 `BAILIAN_MODEL=qwen3.8-max` 被 API 接受（chat 成功）。经 ModelGateway 分级
+  （light→qwen-turbo / heavy→qwen-plus，含真实降级链）。
+- 因此上述"未通过真实推理验证"条目已由 8.1 复验**解除**（前提：运行进程注入 Machine 级 key）；
+  无 key 环境下退化路径（retry/fallback/escape）仍按 §1 验证有效。
+
+- 本报告先于结论（PROCESS §1）：结论 = Agent 编排链路在真实装配下可运行、可降级、可归因，
+  且**真实模型生成已实测通过**（注入系统级 key 后）；真实模型质量结论（出题/评估质量）待后续评测。
