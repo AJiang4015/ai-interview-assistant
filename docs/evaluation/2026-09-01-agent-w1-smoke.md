@@ -10,15 +10,18 @@
 
 **冒烟 29/29 PASS；agent 单测 126 passed；存量关键测试（legacy planner/config）无回归。**
 
-**重要环境限制（如实记录）**：`.env` 中 `BAILIAN_API_KEY` 无效（真实调用返回 `401 Unauthorized`，
-网络可达但凭证失败；`BAILIAN_MODEL=qwen3.8-max` 亦非标准可用模型名）。因此**真实模型推理无法执行**。
-Day 5 的处理方式：
+**重要环境限制（如实记录）**：真实模型推理未通过验证。2026-09-01 环境探测证据：
+- `BAILIAN_API_KEY` **不在系统环境变量**（`os.environ` 无此项）；实际生效的是 `.env` 中的值。
+- DashScope 对 chat 与 models 列表接口均返回 `401 {"code":"InvalidApiKey","message":"Invalid API-key provided."}`
+  —— 即**当前 key 无效**（非 model id 问题）；因 key 无效无法枚举可用模型 id，`BAILIAN_MODEL=qwen3.8-max`
+  是否为有效模型 id 无法确认。
+- 不修改 `.env` / 不写入 key / 不为了适配模型名增加业务逻辑（按要求）。
+
+因此 Day 5 的处理方式：
 - 真实客户端路径（`LLMClient` + 真实网络 + 真实 401）用于验证**失败降级矩阵**——这是当前密钥下
   Agent 的真实可观测行为（LLM 失败 → 重试 → 确定性兜底 → 流程完成；逃生舱 → 强制收尾）；
 - 正常出题/追问/评估路径用**可工作模型适配器**跑在**真实工厂装配**上（真实 InterviewStore /
   TopicTracker / settings 配置 / 六工具注册表 / 状态机 / 逃生舱），证明装配与状态流本身正确。
-- **真实模型可用后**（有效 key），可直接运行 `scripts/agent_w1_smoke.py` 场景 2 复验（适配器返回值
-  替换为真实响应即可，无需改装配代码）。
 
 ## 2. 装配验证（interview_mode）
 
@@ -74,7 +77,12 @@ INIT → QUESTIONING → AWAITING_ANSWER → FOLLOWUP → AWAITING_ANSWER
 
 ## 8. 遗留事项
 
-- **有效 `BAILIAN_API_KEY` 待提供**：到位后运行 `python scripts/agent_w1_smoke.py` 场景 2/4/5
-  复验真实模型推理路径（预期：happy path 以真实出题/评估/追问输出跑通；401 场景自动变为不可复现）。
+> **当前运行环境已注入 BAILIAN_API_KEY，但对应模型配置未通过真实推理验证。真实客户端调用链、
+> 异常处理、retry、fallback、escape 已验证。待确认正确 model id / 权限后，可直接复跑真实生成场景。**
+>
+> 环境探测补充（2026-09-01）：`BAILIAN_API_KEY` 未出现在系统环境变量，生效值为 `.env` 内容；
+> DashScope 返回 `InvalidApiKey`（key 无效），模型列表无法枚举，`qwen3.8-max` 是否有效 model id 待确认。
+> 待 key 有效后可运行 `python scripts/agent_w1_smoke.py` 场景 2/4/5 复验真实模型推理路径。
+
 - 本报告先于结论（PROCESS §1）：结论 = Agent 编排链路在真实装配下可运行、可降级、可归因；
   真实模型质量结论待有效密钥后补测。
