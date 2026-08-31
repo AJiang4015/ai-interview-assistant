@@ -1,157 +1,117 @@
-# PROJECT_STATUS.md — 项目状态恢复快照
+# PROJECT_STATUS.md — 项目当前状态
 
-> 生成目的：作为项目负责人帮你恢复开发上下文（跨 AI IDE 迁移丢失上下文后）。
-> 性质：**只读调研结论**，未改动任何业务代码、未重新设计架构、未引入新技术。
-> 快照时间：2026-08-29。事实依据：`git log` / `git status` / `ARCHITECTURE.md` / `PROBLEM.md` / `DECISIONS.md` / `docs/superpowers/specs/*` / `docs/evaluation/*`。
-
----
-
-# 项目目标
-
-用「知识库检索增强 LLM 生成」构建一款 **Java / 后端程序员面试助手**（Interview RAG）：
-
-1. 用户上传个人技术知识库（md / pdf / docx）→ 构建检索索引；
-2. 系统走「查询改写 → 混合检索(RRF) → 重排 → LLM 生成 → 幻觉/成本评估」完整管线作答；
-3. 扩展出 **AI 模拟面试、简历项目深挖、复习画像、会话/认证、离线评测调优、可观测性** 等产品能力线。
-
-核心心智模型的一句话（来自 ARCHITECTURE §1，唯一事实来源）：**用「知识库检索增强 LLM 生成」，做一款程序员面试助手。**
+> 性质：**当前状态快照**（只回答"现在走到哪一步"，不重复"过去做过什么"）。
+> 生成日期：2026-09-01。事实基线：`git log` / `git status` / `git branch`（当前分支 `agent-dev`，main 冻结于 `6a0e385`）/ 代码核对（`app/config.py`、`app/services/agent/`、`app/services/cache_service.py`）/ `docs/evaluation/*`。
+> 权威文档链：`AGENTS.md`（宪法）→ `ARCHITECTURE.md`（技术栈/模块）→ `DECISIONS.md`（DR）→ `PROBLEM.md`（问题注册表）+ `docs/problems/`（问题档案）→ `PROCESS.md`（流程）→ `docs/evaluation/`（实验证据）。
 
 ---
 
-# 当前架构
+## 1. Current Thesis
 
-**技术栈（唯一事实来源 `ARCHITECTURE.md` §2）**
+**一句话**：这是一个从 RAG Demo 演进为**可评测、可降级、可观测、可持久化**的工程化 RAG 系统（面向 Java / 后端程序员面试场景），当前正在其上叠加**确定性编排 Agent 面试系统**（`agent-dev` 主线）。
 
-| 层 | 选型 |
-|----|------|
-| 后端 | FastAPI 0.115 + uvicorn + Pydantic v2 / pydantic-settings |
-| LLM | 阿里云百炼 `qwen-turbo`（config 未提交改动默认值，⚠见风险） |
-| Embedding / Rerank | 硅基流动 `Qwen/Qwen3-Embedding-4B` / `Qwen/Qwen3-Reranker-4B` |
-| 向量库 | FAISS（faiss-cpu，Flat / HNSW）× 命中 top-20 |
-| 稀疏检索 | rank_bm25 / Whoosh / SQLite FTS（`sparse_backend`，降级链 memory） |
-| 会话/用户热数据 | Redis（固定 `192.168.127.101:6379`，TTL 3600s，单会话 20 轮） |
-| 长期事实源 | SQLite `search_store`（跨会话全文搜索 + 用户历史持久化，DR-010） |
-| 认证 | passlib[bcrypt] + PyJWT，`get_current_user` 依赖注入 |
-| 流式 | SSE（事件 `session / retrieval / token / done / error`，DR-005） |
-| 可观测性 | OpenTelemetry(可选) + Prometheus 风格 metrics + Grafana（`docs/observability/`） |
-| 前端 | 原生 HTML/CSS/JS，CDN marked + highlight.js + DOMPurify（DR-009） |
+三阶段演进主张：
 
-**分层依赖方向（Law of Layers）**：API → Services → Storage / Utils；禁止反向/横向越界（各 `*_LAYER.md` 为契约）。
-
-**关键约束**：单 worker 落盘模型（DR-002）；依赖失败优雅降级（DR-001）；缓存 key 仅原始问题（DR-004，⚠见未完成）。
+1. **RAG Demo**（能跑通）：检索增强生成，回答知识库问题。
+2. **工程化 RAG**（已完成）：检索质量用评测闭环量化、管线可配置可降级、缓存/SSE/持久化/隔离/成本控制全部工程化。
+3. **确定性编排 Agent**（进行中）：把"面试官"从硬编码服务升级为状态机 + LLM 角色节点的可编排、可归因、可评测 Agent 系统（`interview_mode=legacy|agent`，默认 legacy）。
 
 ---
 
-# 已完成
+## 2. Current Phase
 
-**核心 RAG 问答（已打通生产链路，`main.py` lifespan 装配）**
-- 非流式 + SSE 流式问答，`retrieval / token / done / error` 事件闭环。
-- 查询改写 → HybridRetriever(RRF k=60 融合 FAISS+稀疏) → SiliconFlow Rerank(top5) → Parent 上下文扩展 → LLM 生成 → 幻觉评估 → 会话落 Redis。
+**Agent 编排化改造 W1（Week 0 决策冻结已完成，W1 骨架已落地）**：
 
-**大规模 RAG 检索（2026-08-16 plan 已完成接入生产）**
-- `Chunker`：递归重叠 + 段落感知 + parent-child（chunk 1000 / overlap 200）。
-- 向量索引工厂化（Flat / HNSW）+ 线程池并发检索。
-- 可插拔稀疏检索后端（内存 / whoosh / sqlite_fts）+ 显式降级链。
-- `index_pipeline`：受控并发嵌入入库、断点续传、幂等、进度回传。
-- 端到端护栏测试（召回一致性 / 降级 / 幂等）/ 基准脚本。
+- 分支 `agent-dev`（基于 main `6a0e385` 冻结点），main 保持冻结。
+- W0（2026-08-31）：Spec→代码映射核对完成，OPEN-1..6 与 F7/F8/F9 决策冻结（commit `e88b8e0` / `6c44dd6` / `0fb5f38`）。
+- W1（2026-09-01）：状态机 / 门禁 / 逃生舱 + trace 记录器已实现并通过单测（`app/services/agent/state_machine.py`、`trace.py`，commit `2e6cada`，agent 单测 32 个断言）。
+- W1 剩余：角色/结构化输出重试、本地工具注册表、装配接线（`interview_mode` 工厂）、真实 LLM 联调——按 impl-spec v2（`docs/superpowers/specs/2026-08-31-agent-orchestration-refactor-impl-spec.md`）附录 D/A/B/C/E/F/H 推进。
 
-**产品能力线**
-- AI 模拟面试：`InterviewAgent` + `InterviewPlanner`，面试会话/逐题/评分原因/参考答案/报告/历史/统计/复习画像，按用户隔离。
-- 简历深挖：`DeepDiveService` + `ResumeParser`（简历/JD 解析与匹配）。
-- 认证 + 全栈用户隔离 + 限流 + 会话历史持久化 + Redis 会话（`d2ace2f` / `dfd1a88` / `55483ae`）。
-- 前端四视图（AI面试/复习/问答/设置）SPA + SSE 流式渲染（切换会话不中断，D1–D4/D11）。
-- 离线评估：`evaluation_service` / `eval_testset` / `eval_metrics` / `/api/eval/*` + 异步后台任务进度。
-- 可观测性：OTel Trace + Token 成本核算 + 会话成本预算告警 + 幻觉评估监控。
-
-**离线评测闭环 Part A（实验数据已产出，但收尾未完成 → 见「未完成」）**
-- 手写评测集已落盘 `data/eval_testset.json`（32 条核心集，四维度布局：跨文档 / 易混辨析 / 口语面试 / 边界反直觉）。
-- `scripts/eval_runner.py` 已实现基线 + query-rewrite/rerank 4 组合消融矩阵。
-- 产物已落盘 `docs/evaluation/`（基线与消融见「当前风险/下一步」详情）。
-
-**工程 / 部署**
-- Docker：`docker-compose.yml`（rag-app + redis）、`Dockerfile`（单 worker）、`.env.example`、`Makefile`（未提交）。
-- 文档体系：`ARCHITECTURE.md` / `DECISIONS.md`(DR-001~DR-010) / `PROCESS.md` / `PROBLEM.md` / 各 `*_LAYER.md`；spec/plan 归档 `docs/superpowers/`。
+> RAG 侧（Part A / Part B）已闭环完成，进入稳定维护态，仅按需跟随 agent 主线复用。
 
 ---
 
-# 未完成
+## 3. Current System Maturity
 
-**A. 离线评测闭环 Part A「收尾」未做（当前工作区正在进行的半成品）** — Spec `2026-08-28-retrieval-eval-closed-loop-partA.md` 验收清单中「建集 v0」已勾选，但「后续阶段（基线/门禁/消融）」多未勾选：
-- 消融实验**数据已出**（4 组 qr×rr + 基线已跑），但**结论尚未写成决策文档**。
-- **门禁阈值未按基线落定**到配置/文档（Spec 明确要求「不凭空拍，先有基线再落阈值」）。
-- **管线 `enable_*` 开关未按消融结论调整**（当前仍全开）。
-- `make eval` 可重复命令、`pytest tests/` 全量通过 未确认完成。
-- 相关改动**大量尚未 git 提交**（见「当前风险」）。
-
-**B. Spec Part B：面试检索升级 — 尚未启动**（`2026-08-28-interview-retrieval-upgrade-partB.md`）
-- 前置条件是「Part A 消融结论达标」（基线明确 + qr/rr 明确决策 + 消融后整体不劣于基线，三条件同时满足）。
-- 已规划未实现：统一 retrieval facade、默认「追问不检索」的触发策略、`enable_interview_followup_retrieval` 开关。
-
-**C. 遗留 Active 问题（规则已定，代码未落地）**
-- **P001（High）响应缓存 key 含 `session_id`/`msg_count`** → 命中率趋近 0；已确认正确方向是「key 仅用原始问题」（DR-004 / D5），但 `cache_service.make_key` 未改。Spec 也将其列为最高性价比门禁（P5 Door5 未落地）。
-- **P006（High）单 worker 落盘 / 索引陈旧 state**：规则已固化（`a22cdf8`），但无多 worker 并发的进程级锁。
-- **门禁自动化（PROBLEM.md Appendix P1–P14）**：多数 Door 是「建议 Pytest/Lint」，尚未机器可执行落地。
-
-**D. 其它未收口**
-- 评测集 LLM 扩展集（100~150 条）**生成代码就绪但未实跑**（Spec 明确本次不跑以控成本；基线阶段前需补齐，但基线当前已用完整集跑出）。
-- 前端「复习」视图与设置视图的部分交互、以及前端对认证/评分原因的完整覆盖，按子代理核查存在「功能就绪但与后端契约细节待核对」的不确定性（如 `deep_dive` 服务的用户隔离校验较 `interview` 弱）。
+| 维度 | 能力 | 成熟度 |
+|------|------|--------|
+| **Core RAG** | ingestion（chunk 1000/200、断点续传）· retrieval（FAISS+BM25，RRF k=60）· rerank（SiliconFlow top-5）· generation（qwen-turbo，SSE）· evaluation（基线/消融闭环） | ✅ 生产可跑 + 有数据证明 |
+| **Engineering** | cache（key 仅原始问题，已修复+回归）· session（Redis+SQLite 双层）· persistence（单 worker 落盘）· auth/isolation（JWT+username 透传）· SSE（多会话稳定）· graceful degradation（DR-001）· observability（OTel/metrics）· cost control（缓存/追问不检索/模型分级） | ✅ 已闭环（除门禁自动化） |
+| **Product** | AI 面试（legacy 完整；agent 新实现 W1 骨架）· 简历深挖 · 复习画像 · 评测 | ✅ 功能就绪，agent 形态演进中 |
+| **Agent 编排（新增主线）** | 确定性状态机（8 状态）· 门禁 G0..G9 · 全局逃生舱 · trace 归因 · 结构化输出重试（规划）· MCP 双工具（规划 W2）· 多模型分级（规划 W2） | 🚧 W1 进行中 |
 
 ---
 
-# 当前风险
+## 4. Key Completed Capabilities（只列已闭环）
 
-1. **⚠ 大量未提交改动（高优先级）**：当前分支 `feature/large-scale-rag`，`git status` 显示约 17 个文件、+1550/-197 行未提交，涵盖：Part A 核心实现（`eval_metrics.py`/`eval_testset.py`/`evaluation_service.py` + 对应测试）、新增 `data/eval_testset.json`、新增 `JUC.md`(1137 行)、`scripts/eval_runner.py`、`Makefile`、spec 文档、`.env.example`/`config.py`/`requirements.txt` 改动。**跨 IDE 迁移后这些是「未落盘的工作成果」，务必先提交入库，勿丢失。**
-
-2. **⚠ 模型命名事实源不一致**：`config.py` 未提交 diff 将默认 `bailian_model` 从 `qwen3.7-max` 改为 `qwen-turbo`、`token_price` 同步更新；而 Memory 记录为 `qwen3.7-plus`、AGENTS 铁律写 `qwen-turbo`。**三方不一致**，需统一唯一事实源（按 `ARCHITECTURE.md` §2 规约，应落一处并在 `.env`/`config.py` 生效）。
-
-3. **消融结论需要严谨化才能驱动配置**：4 组消融（40 条手写集）关键指标：
-   | 组合 | recall@top-k | mrr | faithfulness |
-   |------|------|------|------|
-   | qr_off · rr_off | 0.850 | 0.808 | 0.948 |
-   | qr_on · rr_off | 0.900 | 0.825 | 0.940 |
-   | qr_off · rr_on | 0.913 | 0.829 | 0.950 |
-   | qr_on · rr_on | 0.913 | 0.798 | 0.956 |
-     基线（完整集，生产全开）0.904 / 0.819 / 0.961。观察：任一开关开启召回均提升；但 **rr 与 qr 同时开启时 mrr(0.798) 反而低于 rr 单独(0.829)** → 需判断是否要调 `rr top-k`/RRF 权重，或考虑单独保留 rr、qr 视场景。这是「给 Part B 放行的最后一步」。
-
-4. **P001 缓存失效叠加成本**：响应缓存当前几乎不命中，高频重复问题会重复消耗 LLM/Embedding，放大 Session token 预算告警（P011 关联）。
-
-5. **单 worker 约束**：`<--workers 1` 是硬约束（D9/DR-002），部署 / 未来扩容时不能直接多开。
-
-6. **LLM 成本已投入**：基线完整集（120 条，一次）约 ~230 万 token / ~$3；消融 4 组已跑（受控 40 条）。继续跑实验前需确认百炼配额/预算（此前已遇 Dashscope 免费额度耗尽）。
+- **检索评测闭环（Part A）**：`data/eval_testset.json`（手写核心集 + LLM 扩展集 120 条）→ 基线 → 4 组消融（qr × rr）→ 正式决策（commit `e404561`）。结论见 `docs/evaluation/retrieval_ablation_decision.md`。
+- **统一检索门面（Part B）**：`RetrievalFacade` 抽出，问答与面试共用一条已验证管线；面试 MRR 0.559→0.588、recall 持平（commit `9bb26f9`）；追问默认不检索开关落地。
+- **缓存 key 修复（P001 / DR-004）**：`make_key` 仅基于原始问题，+6 个回归测试（commit `e41788e`）。
+- **用户隔离与双层持久化（DR-010）**：Redis 短期 + SQLite 长期 + username 逐层透传，越权 404。
+- **降级链（DR-001）**：Redis 不可用→禁会话/缓存；BM25 缺失→FAISS-only；OTel 失败→静默；LLM 输出健壮解析（DR-008）。
+- **可交付版本功能验收**：本地 RAG 问答 + 认证 + SSE 事件链全链路通过（`docs/evaluation/2026-08-29-local-smoke-acceptance.md`）。
+- **Agent W1 骨架**：`state_machine.py`（8 状态 + 14 事件 + 门禁 + 逃生舱）、`trace.py`（JSONL 归因记录器），单测通过。
 
 ---
 
-# 下一步建议
+## 5. Key Evidence / Metrics（单一事实源：`docs/evaluation/retrieval_ablation_decision.md`）
 
-按 Spec 自带的执行顺序（Part A ①→⑤ → Part B）推进，不要跳步，也不要在此刻重新设计架构。
+| 配置 | 评测集 | n | recall@top-k | mrr | faithfulness |
+|------|--------|----|:---:|:---:|:---:|
+| qr_off · rr_off | 手写集 | 40 | 0.850 | 0.808 | 0.948 |
+| qr_on · rr_off | 手写集 | 40 | 0.900 | 0.825 | 0.940 |
+| qr_off · rr_on | 手写集 | 40 | 0.913 | 0.829 | 0.950 |
+| qr_on · rr_on | 手写集 | 40 | 0.913 | **0.798** | **0.956** |
+| 生产基线（全开） | 完整集 | 120 | 0.904 | 0.819 | 0.961 |
 
-1. **先入库（P0）**：把当前 `feature/large-scale-rag` 上未提交的 Part A 改动提交为独立 commit（按 `PROCESS.md` §6「一个行为一个问题一个 commit」，可拆为：评测核心实现 + 评测集 + 评测脚本/报告 + JUC 知识库 + config/依赖），把「完成一半的实验结果」固化，防止跨 IDE 迁移再丢上下文。
-2. **Part A 收尾（P0）**：依据已产出的基线+消融数据写「消融结论」文档（落到 `docs/evaluation/`），给出 qr / rr 的**明确保留/关闭决策**；据结论更新 `.env`/`config.py` 中对应 `enable_*` 开关与 RRF top-k；按基线落定门禁阈值到配置/文档；补 `make eval`/验收项；验证 `pytest tests/` 全量通过（`requirements.txt` 已加 pytest，需在 Conda 环境跑）。
-3. **修复 P001（P0）**：改 `cache_service.make_key` 为仅基于原始问题哈希，并补 `test_make_key_no_session_dimension` 回归（PROBLEM.md Door5 / DR-004）。收益最大、改动小。
-4. **达到 Part A 门槛后启动 Part B（P1）**：`interview-retrieval-upgrade-partB`——统一 retrieval facade、默认追问不检索、`enable_interview_followup_retrieval` 开关。
-5. **统一模型名事实源（P1）**：消除 qwen-turbo / qwen3.7-max / qwen3.7-plus 三处不一致，以 `ARCHITECTURE.md` §2 + `.env` 为唯一事实来源并同步 `config.py` 默认值。
-6. **门禁自动化（P2）**：按 `PROBLEM.md` Appendix P1–P14 将 D1–D14 映射为可执行 Pytest/Lint，优先 Door5（P001）、Door10/2/3（前端安全/流式）。
-7. **可交付版本验证（P1，里程碑）**：跑一次完整冒烟——`pytest` 全绿 + Docker 部署（`docker-compose up`）+ 前端四视图端到端（含 SSE 切换会话、认证隔离、设置/评测），作为「第一个可交付版本」的验收。
+**读法（不是数字罗列）**：单模块开启均改善召回；**qr + rr 联合开启不产生叠加收益，MRR 反而回落（0.829→0.798）**——这是**排序问题而非召回问题**（recall 处峰值、faithfulness 最高）。结论：生产默认保留 `qr_on + rr_on`，回落信号列为 RRF k / rerank top_k / rewrite 策略的参数优化项，**不通过开关式关闭解决**。这一发现证明了"用实验决定 pipeline 配置，而非默认组件越多越好"。
+
+**Part B 复试（面试子集 17 条）**：升级前（raw FAISS top-3）recall 0.588 / MRR 0.559 → 升级后（facade top-5）recall 0.588 / **MRR 0.588**，不劣于基线，达标。
+
+**回归**：`python -m pytest tests/` 全量通过（Part B 验收时 143 passed）；agent W1 单测通过。
 
 ---
 
-# 优先级排序
+## 6. Blocking Issues（当前真实 blocker）
 
-| 优先级 | 事项 | 说明 |
-|--------|------|------|
-| **P0-1** | **提交当前未提交改动** | 防止已完成的 Part A 实验/代码因 IDE 迁移丢失；最高优先 |
-| **P0-2** | **Part A 收尾**：消融结论沉淀 + 门禁落定 + 按结论调整 `enable_*`/RRF + `make eval` + pytest 全过 | 这是卡住 Spec B 的唯一前置，也是「第一个可交付」门禁质量的依据 |
-| **P0-3** | **修复 P001 缓存 key**（仅原始问题）+ Door5 回归测试 | 改动小、收益大、为成本兜底，PROBLEM.md 自评最高性价比 |
-| P1 | 关键路径模型命名事实源统一（qwen 系列三处不一致） | 防线上用错模型/计价 |
-| P1 | 依据 Part A 达标结果启动 **Spec B 面试检索升级** | 前置 = Part A 达标，勿提前 |
-| P1 | 可交付版本端到端验收（pytest + Docker + 前端四视图） | 里程碑验收 |
-| P2 | 门禁自动化（PROBLEM.md Appendix P1–P14 落地） | 把「请遵守」变成「会被 CI 拦」 |
-| P2 | 评测集 LLM 扩展集实跑 + 前端 deep_dive 用户隔离校验补齐 | 增强评估覆盖与一致性 |
+1. **W1 未收尾**：角色节点（`roles.py`）/ 结构化输出重试（`structured_output.py`）/ 本地工具注册表 / `interview_mode` 工厂装配 / 真实 LLM 联调未完成——agent 模式尚不可用。
+2. **门禁自动化未落地**：PROBLEM.md Appendix Door 1–14 多数仍是"建议 Pytest/Lint"，未机器可执行（P001 的 Door 5 例外：已有回归测试）。
+3. **agent 模式无对照评测**：legacy vs agent 的 17 样本对照表尚未产出（W2 下计划）。
+
+---
+
+## 7. Current Risks
+
+1. **Agent 主线时间盒**：W1–W3 有严格砍单链（状态机+门禁 > 结构化输出+重试 > MCP 双工具 > 长期记忆 > 多模型分级 > LangGraph），超时必须砍，不得拖延。
+2. **LLM 成本**：真实评测/联调消耗 API 额度（此前已遇免费额度耗尽）；基线 n=120 单次约 ~230 万 token。agent 联调应复用 Part A 的成本控制纪律（子集 + 控次数）。
+3. **单 worker 硬约束（DR-002）**：FAISS/index/ingest_state 落盘假定单进程，Docker `--workers 1`；扩容需先补进程级锁。
+4. **知识库质量短板（已登记 Part C）**：Java 集合类主题在面试检索中串题（`JAVA集合.md` 3 题全 miss，被 `test_java/Redis.md` 抢占）——属索引/基数质量，非管线问题，独立立项解决。
+5. **前端契约**：agent 模式沿用 legacy 响应形状（start/answer/end/report）可零前端改动，但 demo 阶段 trace 含用户回答，展示时需人工把关。
+
+---
+
+## 8. Next Milestone
+
+**W1 完成（最小闭环 demo）**：状态机 + 门禁 + 逃生舱 + 结构化输出重试 + 本地工具注册表 + `interview_mode` 装配接线 + 真实 LLM 联调，达到"可演示最小闭环"。
+
+后续：W2 上（MCP 双工具 + model_gateway 分级）→ W2 下（profile_store + legacy/agent 对照评测 + trace 断言报告落 `docs/evaluation/`）→ W3（演示打磨 + 话术训练 + LangGraph spike stretch）。
+
+---
+
+## 9. Exact Next Actions
+
+1. **W1 剩余实现**（按 impl-spec v2 附录 D/A/B/C/E/F/H）：`roles.py` → `structured_output.py`（jsonschema 校验 + 3 次回填重试）→ `tools.py`（kb_retrieve / pick_next_topic 本地注册表）→ `orchestrator.py`（事件循环 + 逃生舱接线）→ `agent_service.py`（镜像 legacy surface）→ `app/main.py` 装配 `interview_mode` 工厂。
+2. **联调与演示**：真实 LLM 跑通最小闭环，产出 W1 demo。
+3. **文档同步（DoD）**：agent 模块落地后更新 `SERVICES_LAYER.md` 契约；agent 定稿后向 `DECISIONS.md` 沉淀新 DR（如"确定性编排 vs 自由循环"、"多模型分级"）。
+4. **门禁自动化（P2）**：按 PROBLEM.md Appendix 将 Door 2/3/10/11（SSE/前端安全）等映射为可执行测试。
+5. **Part C 立项（P2，独立）**：知识树驱动出题 query 优化（依赖知识树查询能力成熟确认）。
 
 ---
 
 ## 附：给下一会话的交接要点
-- 权威文档链：`AGENTS.md`(宪法) → `ARCHITECTURE.md`(技术栈/模块) → `PROCESS.md`(流程/命令) → `DECISIONS.md`(DR) → `PROBLEM.md`(已知问题/门禁)。
-- **当前正卡在 Part A 的「第⑤步：结论沉淀并驱动配置」**：实验数据已产出，缺决策与落地。
-- 继续开发前先 `git status` 确认工作区，再决定是否先提交 Part A 改动。
-- 铁律三连：缓存 key 仅原始问题（DR-004）；流式不改 `state.sessionId`/不 `abort()`（DR-005/D1–D4）；重排走 SiliconFlow API 禁本地 bge（DR-003）。
+
+- **当前卡点**：agent W1 骨架已落地（state_machine/trace + 单测），剩角色/结构化输出/工具/装配/联调。
+- **继续开发前**：`git status` + `git log --oneline -5` 确认工作区；主线在 `agent-dev`，main 冻结勿动。
+- **铁律三连（不变）**：缓存 key 仅原始问题（DR-004/P001，已修复勿回退）；流式不改 `state.sessionId` / 不 `abort()`（DR-005/P002）；重排走 SiliconFlow API 禁本地 bge（DR-003/P003）。
+- **实验纪律**：改检索/生成前必读 `PROCESS.md` §3（唯一变量、fresh 测试集、先结果后结论）；数据进 `docs/evaluation/`。
+- **权威数字**：消融结论只在 `docs/evaluation/retrieval_ablation_decision.md`，其他文档引用不复制。
