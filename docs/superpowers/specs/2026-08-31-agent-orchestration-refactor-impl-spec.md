@@ -22,6 +22,8 @@
 
 **W0 决策冻结（2026-08-31，详见 `docs/superpowers/plans/2026-08-31-agent-orchestration-w0-mapping.md`）**：OPEN-1..6 与补充发现 F7/F8/F9 全部确认。总原则（用户定调）：**Agent 可以新增语义，但尽量不破坏已有数据模型与 API；需要兼容时通过小的、默认行为不变的扩展点解决。** 接口约束已并入对应附录（E1/E5/E6、A6、F、I）。
 
+**结构化输出重试口径（W1 Day 3 冻结，消除"3 次重试"歧义）**：`generate_structured` 的 `max_attempts=3` = **1 次初始生成 + 最多 2 次重试**；第 3 次尝试仍失败即 `fallback=True`（触发门禁 G1-F/G4-F 确定性兜底）。`retries = attempts - 1` 写入 trace.retries。
+
 ---
 
 ## 2. JD 能力要求拆解与覆盖映射（3 份 JD 合并）
