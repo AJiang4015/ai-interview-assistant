@@ -52,7 +52,7 @@ from app.services.agent.state_machine import (
     StateMachine,
     StepResult,
 )
-from app.services.agent.structured_output import generate_structured
+from app.services.agent.structured_output import StructuredResult, generate_structured
 from app.services.agent.tools import ToolAbortError, ToolError, ToolRegistry
 from app.services.agent.trace import ToolCallTrace, TraceRecorder, TraceRecord
 from app.storage.interview_store import InterviewStore
@@ -380,6 +380,40 @@ class AgentOrchestrator:
 
     # ---------------------------------------------------------------- 节点执行（薄组合层）
 
+    async def _run_role_node(
+        self,
+        ctx: SessionContext,
+        *,
+        node: str,
+        role: str,
+        system: str,
+        prompt: str,
+        model_cls: type,
+        started: float,
+        fallback_label: str,
+    ) -> StructuredResult:
+        """角色节点执行（薄组合）：generate_structured + trace node_started/node_finished。
+
+        LLM 调用/网络异常（spec G 矩阵「LLM 调用失败」）→ 包装为 fallback 结果，
+        由各节点按既有 fallback 逻辑走确定性兜底（G1-F / G1-f / G4-F）。
+        """
+        self._record(ctx, event="node_started", node=node, role=role)
+        try:
+            result = await generate_structured(
+                self._llm_call, prompt, model_cls.model_json_schema(), model_cls, system=system,
+            )
+        except Exception as e:  # noqa: BLE001 —— LLM 失败 → 降级矩阵：节点确定性兜底
+            result = StructuredResult(ok=False, attempts=1, errors=[f"llm_call failed: {e}"], fallback=True)
+        self._record(
+            ctx, event="node_finished", node=node, role=role,
+            input_summary=prompt[:300],
+            raw_output=json.dumps(result.data, ensure_ascii=False) if result.data else None,
+            validated=result.ok, retries=result.retries,
+            fallback_used=fallback_label if result.fallback else None,
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+        return result
+
     async def _ask_question(self, ctx: SessionContext) -> dict:
         """QUESTIONING 节点：kb/profile/topic 注入 → 结构化出题（含 G1-F 兜底）。"""
         started = time.monotonic()
@@ -408,17 +442,10 @@ class AgentOrchestrator:
             knowledge_context=kb_text, coverage_summary="",
             profile_summary=profile_summary, suggested_topic=suggested_text,
         )
-        self._record(ctx, event="node_started", node="questioner", role="出题人")
-        result = await generate_structured(
-            self._llm_call, prompt, Question.model_json_schema(), Question, system=QUESTIONER_SYSTEM,
-        )
-        self._record(
-            ctx, event="node_finished", node="questioner", role="出题人",
-            input_summary=prompt[:300],
-            raw_output=json.dumps(result.data, ensure_ascii=False) if result.data else None,
-            validated=result.ok, retries=result.retries,
-            fallback_used="question_fallback" if result.fallback else None,
-            latency_ms=int((time.monotonic() - started) * 1000),
+        result = await self._run_role_node(
+            ctx, node="questioner", role="出题人", system=QUESTIONER_SYSTEM,
+            prompt=prompt, model_cls=Question, started=started,
+            fallback_label="question_fallback",
         )
         if result.fallback:
             ctx.consecutive_failures += 1
@@ -444,17 +471,10 @@ class AgentOrchestrator:
         """FOLLOWUP 节点：失败返回 None（G1-f：放弃追问转评估）。"""
         started = time.monotonic()
         prompt = build_followup_prompt(question_row["question"], answer)
-        self._record(ctx, event="node_started", node="followuper", role="追问者")
-        result = await generate_structured(
-            self._llm_call, prompt, FollowUp.model_json_schema(), FollowUp, system=FOLLOWUPER_SYSTEM,
-        )
-        self._record(
-            ctx, event="node_finished", node="followuper", role="追问者",
-            input_summary=prompt[:300],
-            raw_output=json.dumps(result.data, ensure_ascii=False) if result.data else None,
-            validated=result.ok, retries=result.retries,
-            fallback_used="followup_skipped" if result.fallback else None,
-            latency_ms=int((time.monotonic() - started) * 1000),
+        result = await self._run_role_node(
+            ctx, node="followuper", role="追问者", system=FOLLOWUPER_SYSTEM,
+            prompt=prompt, model_cls=FollowUp, started=started,
+            fallback_label="followup_skipped",
         )
         if result.fallback:
             ctx.consecutive_failures += 1
@@ -484,17 +504,10 @@ class AgentOrchestrator:
             knowledge_context=kb_text,
             reference_hint="、".join(ctx.current_tags),
         )
-        self._record(ctx, event="node_started", node="evaluator", role="评估官")
-        result = await generate_structured(
-            self._llm_call, prompt, Evaluation.model_json_schema(), Evaluation, system=EVALUATOR_SYSTEM,
-        )
-        self._record(
-            ctx, event="node_finished", node="evaluator", role="评估官",
-            input_summary=prompt[:300],
-            raw_output=json.dumps(result.data, ensure_ascii=False) if result.data else None,
-            validated=result.ok, retries=result.retries,
-            fallback_used="eval_rule" if result.fallback else None,
-            latency_ms=int((time.monotonic() - started) * 1000),
+        result = await self._run_role_node(
+            ctx, node="evaluator", role="评估官", system=EVALUATOR_SYSTEM,
+            prompt=prompt, model_cls=Evaluation, started=started,
+            fallback_label="eval_rule",
         )
         if result.fallback:
             ctx.consecutive_failures += 1

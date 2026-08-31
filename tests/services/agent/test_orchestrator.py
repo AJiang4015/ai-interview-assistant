@@ -134,6 +134,28 @@ async def test_tool_degrade_continues(env_dir):
     assert ans["is_complete"] is True
 
 
+# ---------------------------------------------------------------- 6b. LLM 调用失败 → 确定性降级（spec G）
+
+@pytest.mark.asyncio
+async def test_llm_failure_degrades_to_fallback(env_dir):
+    """LLM 调用异常 → 节点确定性兜底（G1-F 兜底题 / G4-F 规则分），不再冒泡崩溃。"""
+
+    async def boom(prompt, system=None):
+        raise RuntimeError("llm down")
+
+    s = build_stack(env_dir, max_rounds=1)
+    s["orch"]._llm_call = boom
+    res = await _start(s)
+    assert res["question"]["content"]  # G1-F
+    ans = await s["svc"].answer(res["question"]["id"], "回答内容足够长避免追问：" + "L" * 300, username="u1")
+    assert ans["evaluation"]["score"] == 5  # G4-F 未命中 → round(5+0)
+    assert ans["is_complete"] is True
+    # trace 至少两个 fallback 事件（question_fallback + eval_rule）
+    tf = s["env"] / "traces" / f"{res['session_id']}.jsonl"
+    events = [json.loads(line)["event"] for line in tf.read_text(encoding="utf-8").strip().splitlines()]
+    assert events.count("fallback") >= 2
+
+
 # ---------------------------------------------------------------- 7. escape hatch → SUMMARIZING
 
 @pytest.mark.asyncio
