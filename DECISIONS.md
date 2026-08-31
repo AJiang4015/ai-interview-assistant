@@ -42,6 +42,12 @@
 | DR-008 | **LLM 输出健壮解析**：生成 / parse / judge 输出做 JSON 围栏剥离与非法值兜底，失败不阻塞主流程 | Active | 2026-08-28 | `PROBLEM.md` D14 / P008 |
 | DR-009 | **前端安全渲染链**：`innerHTML` 注入前 `escapeHtml()` 转义；Markdown 经 `marked.parse → DOMPurify` 过滤；CDN 加载失败回退纯文本 | Active | 2026-08-28 | `PROBLEM.md` D10 / P005 |
 | DR-010 | **请求上下文透传与用户数据隔离契约**：API 层经 `Depends(get_current_user)` 解析 Token 得到 `username`（JWT `sub`），逐层透传到存储作隔离作用域；会话 CUD / 查询 / 搜索均按用户过滤，跨用户访问一律 404；Redis = 短期热数据，SQLite = 长期事实源（Redis miss → SQLite 恢复回填） | Active | 2026-08-28 | `docs/superpowers/specs/2026-08-27-user-history-isolation-persistence-design.md`、`2026-08-27-user-isolation-review-profile-design.md`（PR #1 已合入，squash SHA `51dc39ae`） |
+| DR-011 | **Agent 采用确定性编排状态机**：手写 enum+转移表+门禁（`app/services/agent/state_machine.py`），LLM 只在角色节点内被调用；不做自由 ReAct 循环、不堆 Multi-Agent；转移/门禁/逃生舱全部确定性代码，非法转移拒绝 | Active | 2026-09-01 | `docs/superpowers/specs/2026-08-31-agent-orchestration-refactor-design.md`（决策1）+ impl-spec v2 附录 A/B/C |
+| DR-012 | **MCP 采用官方 SDK + streamable HTTP 运输**：`kb_retrieve`/`mock_resume` 暴露为真实 MCP tools（handler 复用 tools.py）；运输方式经实测 stdio 在本环境被拒（子进程管道 PermissionError）→ 改 streamable HTTP；MCP 不可用自动回退本地 ToolRegistry | Active | 2026-09-01 | impl-spec v2 决策2 / 附录 F / B4；`app/services/agent/mcp_client.py` |
+| DR-013 | **统一模型接入经 LLMClient 分级调用**：`ModelGateway` 只做 TaskSpec / light→qwen-turbo / heavy→qwen-plus / plus→turbo 降级链；必须经 `LLMClient.chat(..., model=None)`（OPEN-2 冻结），不存在第二套 HTTP；成本按实际模型名记录；跨供应商仅保留 `ProviderAdapter` 接口 | Active | 2026-09-01 | impl-spec v2 附录 E5 / W0 OPEN-2/B5；`app/services/agent/model_gateway.py` |
+| DR-014 | **候选人画像口径（F8 冻结）**：`{weak_points, level, accuracy, history}`；accuracy = 最近 10 次主问题单题分均值（过滤 `source='followup'`）；G4-F 兜底分计入但保留 fallback 标记；SUMMARIZING 批量写；RedisProfileStore + Redis 不可用降级会话内；跨会话驱动初始难度与主题注入 | Active | 2026-09-01 | impl-spec v2 附录 E6 / W0 F8；`app/services/agent/profile_store.py` |
+| DR-015 | **追问（FOLLOWUP）契约**：独立 question_id + `source='followup'` + topic/category 留空；统计 / coverage / 画像一律过滤 followup（stats/get_coverage `exclude_sources` 扩展，默认行为不变）；单问题最多 1 次追问；追问生成失败 → 预算置 0 走评估（G1-f，无新增状态） | Active | 2026-09-01 | impl-spec v2 附录 A6 / F1 / W0 OPEN-3/4/5、F9 |
+| DR-016 | **Trace 作为归因基础设施（附录 H）**：JSONL 每 session 一文件（`data/traces/{session_id}.jsonl`），7 类事件（transition/node_started/node_finished/tool_call/fallback/escape/session_end），字段含 retries/validated/fallback_used/latency/cost；保留最近 N 个；用于归因四象限（模型/流程/数据/评估） | Active | 2026-09-01 | impl-spec v2 附录 H；`app/services/agent/trace.py` |
 
 ---
 
@@ -66,8 +72,18 @@
 
 - 三者共同构成"本地重型资源 + 落盘 + 缓存键"三条高压线，已在 `PROBLEM.md` §4 高频规则与 `AGENTS.md` 铁律汇总中有浓缩护栏；本文件为决策事实层，`PROBLEM.md`（注册表）与 `docs/problems/`（问题档案）为历史证据层，`AGENTS.md` 只保留最短强制摘要，三者单向引用，不重复展开。
 
+### DR-011~016 的连带约束（Agent 编排线）
+
+- **为什么选确定性状态机（DR-011）**：可测（转移表逐行单测）、可归因（trace 事件对齐状态）、可降级（门禁/逃生舱确定性兜底）；自由 ReAct 在确定性、可测性与归因三方面均弱于本路线，且与目标 JD"流程编排与规则校验由确定性代码实现"直接对齐。
+- **为什么 MCP 从 stdio 改 HTTP（DR-012）**：实测本环境 stdio 子进程管道被沙箱拒绝（PermissionError），streamable HTTP 端到端通过；决策留出"运输方式可替换"（memory 供单测，HTTP 供运行时），协议层不变。
+- **为什么 Gateway 不绕过 LLMClient（DR-013）**：复用既有 retry（tenacity）、成本（monitor.emit_cost 按实际模型名）、错误处理与超时链路；避免第二套 HTTP 请求逻辑的维护与漂移；分级只是"选模型"，不是"再造客户端"。
+- **为什么 Memory 做薄（DR-014）**：只存四字段 + 最近 10 次主问题分均值；不做记忆层级/摘要管线/检索式记忆；降级路径（会话内）与生产路径（Redis）同协议。
+- **为什么 followup 用 source 标记而非加列（DR-015）**：不迁移 schema、不破坏存量；统计/画像用 `exclude_sources` 过滤（默认行为不变，F9）。
+- **Trace 只读，不建查询服务层（DR-016）**：trace 是归因/演示基础设施，读取由 W3 只读端点直读文件完成，不进入产品查询链路。
+
 ---
 
 ## 3. 变更记录
 
+- 2026-09-01：Agent 编排线决策固化——DR-011 确定性状态机、DR-012 MCP 选型与运输、DR-013 Model Gateway 分级、DR-014 画像口径（F8）、DR-015 追问契约、DR-016 Trace 归因 schema（出处：impl-spec v2 与 W0 决策冻结）。
 - 2026-08-28：随"文档架构整理"（`docs/superpowers/specs/2026-08-28-docs-architecture-reorg-design.md`）从原 `AGENTS.md`、`PROBLEM.md`、相关 Spec 沉淀首批 DR-001~010。

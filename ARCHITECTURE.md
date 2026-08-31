@@ -142,7 +142,7 @@ app/
 │   ├── cache_service（DR-004）· auth_service · rate_limiter · session_cost · monitor · eval_monitor
 │   ├── interview_service(legacy) · interview_agent · deep_dive_service · resume_parser · topic_tracker
 │   ├── evaluation_service · eval_testset · eval_metrics
-│   └── agent/        （主线）state_machine · trace · roles · structured_output · tools · profile_store（W1 Day 1–3 已落地）；orchestrator / agent_service / model_gateway / mcp（W1–W2 规划）
+│   └── agent/        state_machine(确定性状态机) · roles(三角色) · structured_output(校验重试) · tools(工具注册表+六内置) · model_gateway(分级调用) · mcp_client(MCP 桥接) · profile_store(画像 Redis/降级) · orchestrator(编排) · agent_service(legacy 兼容 facade) · trace(JSONL) · fallback(确定性兜底) —— 全部 W1–W2 已落地，契约见 SERVICES_LAYER.md，决策见 DR-011~016，实现依据 impl-spec v2
 ├── storage/          faiss_store · doc_store · session_store(Redis) · user_store · search_store(SQLite) · interview_store · deep_dive_store
 └── utils/            logger · text_splitter
 

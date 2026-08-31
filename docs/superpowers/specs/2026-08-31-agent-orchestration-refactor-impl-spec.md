@@ -4,6 +4,12 @@
 > 评审结论：`docs/superpowers/plans/2026-08-31-agent-orchestration-review-plan.md`（本 spec 已采纳其 B2–B12 全部调整；B1 即本文档本身；B10 已附 JD）
 > 生效规则：本文档为唯一实现依据。**在本文档确认前不生成代码。**
 
+> **进度标记（2026-09-01，W3 打磨期）**：W1（Day1-5 状态机/trace/角色/结构化输出/工具/编排/facade/装配，验收通过）→
+> W2 上（MCP 双工具 streamable HTTP + model_gateway 分级，验收通过）→ W2 下（RedisProfileStore + E6/F8 口径 +
+> legacy vs agent 17 条评测，验收通过）均已落地。W3 为 Demo 打磨 / 面试表达 / 架构复盘 / 决策固化期，
+> 不新增能力；工程冻结验收见 `docs/superpowers/plans/2026-09-01-agent-w3-plan.md`。实现细节状态见
+> `docs/evaluation/2026-09-01-agent-w1-smoke.md` 与 `docs/evaluation/2026-09-01-agent-vs-legacy-eval.md`。
+
 ---
 
 ## 1. 决策基线（继承 + 调整采纳）

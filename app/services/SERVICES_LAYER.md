@@ -90,6 +90,17 @@
 | cache_service | 缓存 key 语义（DR-004：仅原始问题）、命中 / 失效策略 | 缓存失效以外的会话逻辑 |
 | llm_client | LLM 调用、流式 / 非流式封装、输出健壮解析（DR-008） | 检索内容正确性 |
 | interview / deep_dive / evaluation 等业务服务 | 各自业务流程编排 | RAG 管线内部行为 |
+| **agent/state_machine** | 状态 / 事件 / 转移表 / 门禁 / 逃生舱（确定性，DR-011） | 节点业务、工具、画像 |
+| **agent/orchestrator** | 事件驱动编排：节点执行、转移、fallback 接线、trace 钩子、逃生舱检查 | 状态机 / Role / Tool / fallback 的内部实现（只组合不吸收） |
+| **agent/roles** | 角色定义（出题 / 追问 / 评估）：system prompt、输入注入、输出 Schema（Pydantic 单一事实来源） | 校验重试（structured_output） |
+| **agent/structured_output** | JSON 提取 → jsonschema 校验 → 错误回填重试（≤3 次总尝试）→ fallback 信号 | 模型调用、状态流转 |
+| **agent/tools** | Tool 契约 / 注册表 / 内置六工具（kb_retrieve 等，复用存量能力）/ error_policy | 状态机转移、画像聚合 |
+| **agent/model_gateway** | TaskSpec / light-turbo / heavy-plus / plus→turbo 降级链（经 LLMClient，DR-013） | LLM 请求细节（LLMClient）、跨供应商实现 |
+| **agent/mcp_client** | MCP server/client 桥接（kb_retrieve + mock_resume，streamable HTTP，本地回退，DR-012） | 工具业务实现（复用 tools） |
+| **agent/profile_store** | 画像存取（Redis / 会话内降级）与 E6/F8 聚合口径（DR-014） | 会话状态机、报告生成 |
+| **agent/agent_service** | legacy 兼容 facade（start/answer/end + 只读委托），interview_mode 装配 | 编排细节（orchestrator） |
+| **agent/trace** | trace JSONL 写入 / 保留策略 / 字段完整性（DR-016） | 归因解释（演示/复盘侧） |
+| **agent/fallback** | 确定性兜底：G1-F 出题 / G4-F 规则分 / G8 确定性摘要 | 结构化输出重试主体 |
 
 ## 7. 失败归因分类（必须先归到拥有该决策的层，禁止"哪里方便改哪里"）
 
@@ -102,3 +113,16 @@
 - 精排顺序差 → 归 `rerank_service`，不回退去改检索。
 - 命中率低 → 归 `cache_service`（检查 key 是否混入可变维度）。
 - 某 chunk 失败拖垮整批 → 归 `index` / `chunker` 的异常隔离。
+
+**Agent 编排线失败归因**（DR-011~016）：
+
+```text
+状态非法 / 卡死 ≠ 节点输出不合 schema ≠ 工具失败 ≠ 模型调用失败 ≠ 画像口径错误
+```
+
+- 状态流转非法 → 归 `agent/state_machine`（转移表 / 门禁 / 逃生舱），不绕到 orchestrator 改流程。
+- LLM 输出不合 schema → 归 `agent/structured_output`（提取 / jsonschema / 回填重试 / fallback 信号）。
+- 工具执行失败 → 归 `agent/tools`（degrade 跳过打标 / abort 触发逃生舱，进降级矩阵 G）。
+- 模型调用失败 → 归 `model_gateway` 降级链（plus→turbo）→ 仍失败归 LLMClient 错误处理。
+- 画像 accuracy 口径偏差 → 归 `agent/profile_store`（E6/F8），不在 orchestrator 内另算。
+- 归因不清 → 归 `agent/trace` 缺事件 / 缺字段（先补 trace 再下结论）。
