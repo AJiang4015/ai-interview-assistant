@@ -136,7 +136,7 @@ python -m pytest tests/
 
 ## 五、当前状态
 
-分支 `agent-dev`（main 冻结）：Agent 编排化改造 W1 进行中（状态机 / 门禁 / 逃生舱 / trace 已落地），RAG 侧 Part A/B 已闭环。当前阶段、Blockers、风险与下一步见 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
+分支 `agent-dev`（main 冻结）：Agent 编排化改造 W1 进行中（状态机 / 门禁 / 逃生舱 / trace / 三角色 / 结构化输出 / Tool 层 / ProfileStore 已落地，Day 1–3），RAG 侧 Part A/B 已闭环。当前阶段、Blockers、风险与下一步见 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
 
 ---
 
