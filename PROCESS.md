@@ -57,7 +57,7 @@ Problem          （明确要解决什么）
 `PROBLEM.md` 是长期复用的事实来源（注册表 + 索引），**开发与 Debug 前必读**。
 
 1. **开发 / Debug 前先读 `PROBLEM.md`**：先看"第 1 节 Problem Index"与"第 4 节 高频规则"，确认不踩已记录规则（缓存 key、SSE 会话、reranker 选型、单 worker 等）；重大问题细节进 `docs/problems/`。
-2. **按 Trigger 判断是否读具体记录**：遇到已记录现象（如"流式中切换会话输出中断""缓存总不命中""进程 OMP 崩溃"），用对应记录的 `3. Trigger` / `5. Investigation Path` 定位，再决定是否深入。
+2. **按 Trigger 判断是否读具体记录**：遇到已记录现象（如"流式中切换会话输出中断""缓存总不命中""进程 OMP 崩溃"），用 `docs/problems/` 对应档案的 `Problem / Impact / Evidence / Root Cause` 章节定位，再决定是否深入。
 3. **解决非 trivial 问题后更新对应 Problem Record**：先更新 `PROBLEM.md` 注册表状态；重大问题（High/支撑 DR/有复用教训）追加到 `docs/problems/Pxxx-*.md` 对应档案（不清空历史），无法映射则新建记录。
 4. **不覆盖历史事实**：不得修改已确认的 Root Cause / Solution / commit / Status；新增证据用追加方式说明。
 5. **resolved 问题复现先验证，不盲目重复修复**：再次出现时先检查旧方案是否被回退、环境 / 输入是否变化、是否有新 reproduction，再动手——不得直接照搬旧修复。
