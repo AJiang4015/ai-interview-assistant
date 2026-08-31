@@ -245,6 +245,22 @@ class InterviewStore:
                 return d
         return None
 
+    def get_question(self, question_id: str) -> Optional[dict]:
+        """Get a single question by id (evaluation parsed). None if not found.
+
+        供 agent 编排层按 question_id 定位题目（API answer 契约按 question_id 提交）。
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM interview_questions WHERE id = ?", (question_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        if d.get("evaluation"):
+            d["evaluation"] = json.loads(d["evaluation"])
+        return d
+
     def list_sessions(self, limit: int = 20, username: str | None = None) -> list[dict]:
         """List recent interview sessions.
 

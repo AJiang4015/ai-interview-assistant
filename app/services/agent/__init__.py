@@ -1,10 +1,23 @@
 """Agent 编排层（impl-spec v2 附录 D：app/services/agent/）。
 
 W1 进度：Day 1 state_machine（附录 A/B/C）+ trace（附录 H）；Day 2 roles（附录 E3）+
-structured_output（§4.1）；Day 3 tools（附录 F）+ profile_store（会话内降级形态）。
-后续按里程碑补充：model_gateway / mcp_client / orchestrator / agent_service / fallback。
+structured_output（§4.1）；Day 3 tools（附录 F）+ profile_store（会话内降级形态）；
+Day 4 orchestrator + agent_service + fallback（G1-F/G4-F/G8）。
+后续按里程碑补充：model_gateway / mcp_client / Redis profile_store。
 """
 
+from app.services.agent.agent_service import (
+    AgentService,
+    AgentTopicTracker,
+    build_agent_service,
+)
+from app.services.agent.fallback import (
+    deterministic_summary,
+    fallback_question,
+    generate_summary,
+    rule_score,
+)
+from app.services.agent.orchestrator import AgentOrchestrator, SessionContext
 from app.services.agent.profile_store import EMPTY_PROFILE, ProfileStore, SessionProfileStore
 from app.services.agent.roles import (
     EVALUATOR_ROLE,
@@ -68,6 +81,18 @@ from app.services.agent.trace import (
 )
 
 __all__ = [
+    # agent_service
+    "AgentService",
+    "AgentTopicTracker",
+    "build_agent_service",
+    # orchestrator
+    "AgentOrchestrator",
+    "SessionContext",
+    # fallback
+    "fallback_question",
+    "rule_score",
+    "deterministic_summary",
+    "generate_summary",
     # state_machine
     "AgentEvent",
     "AgentState",

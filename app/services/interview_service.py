@@ -410,11 +410,14 @@ class InterviewService:
         """List recent interview sessions (scoped to a user when provided)."""
         return self.store.list_sessions(limit=limit, username=username)
 
-    def stats(self, username: str | None = None) -> dict:
+    def stats(self, username: str | None = None,
+              exclude_sources: Optional[tuple[str, ...]] = None) -> dict:
         """跨场次知识点画像：聚合某用户所有已完成面试中各 topic/category 的得分。
 
         返回每个分类的题目数、平均分、薄弱子标题，用于复习页的"薄弱点画像"。
         按 username 过滤数据源，实现用户复习画像隔离。
+        ``exclude_sources``（F9 冻结）：非空时过滤 source 命中该集合的问题行
+        （agent 模式传 ("followup",)，默认 None 保持 legacy 行为不变）。
         """
         try:
             sessions = self.store.list_sessions(limit=100, username=username)
@@ -432,6 +435,8 @@ class InterviewService:
                 logger.warning(f"Failed to load questions for session {s['id']}: {e}")
                 continue
             for q in questions:
+                if exclude_sources and q.get("source") in exclude_sources:
+                    continue
                 if q.get("answer") == "":
                     continue
                 category = q.get("category") or "未分类"

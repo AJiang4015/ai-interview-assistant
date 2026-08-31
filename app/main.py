@@ -193,15 +193,35 @@ async def lifespan(app: FastAPI):
     # Initialize resume parser
     resume_parser = ResumeParser(llm=llm_client)
 
-    # Initialize interview service
+    # Initialize interview service（legacy / agent 由 interview_mode 选择，API/frontend 零改动）
     interview_store = InterviewStore()
     topic_tracker = TopicTracker(interview_store=interview_store)
-    interview_service = InterviewService(
+    legacy_interview_service = InterviewService(
         interview_store, llm_client, faiss_store, embedding_service,
         resume_parser=resume_parser,
         topic_tracker=topic_tracker,
         facade=retrieval_facade,
     )
+    if settings.interview_mode == "agent":
+        from app.services.agent.agent_service import build_agent_service
+        from app.services.agent.state_machine import EscapeHatchConfig
+
+        interview_service = build_agent_service(
+            store=interview_store,
+            llm=llm_client,
+            facade=retrieval_facade,
+            topic_tracker=topic_tracker,
+            resume_parser=resume_parser,
+            legacy_readonly=legacy_interview_service,
+            trace_dir=settings.agent_trace_dir,
+            trace_retention=settings.agent_trace_retention,
+            escape_config=EscapeHatchConfig.from_settings(),
+            followup_enabled=settings.agent_followup_enabled,
+            max_followup_depth=settings.agent_max_followup_depth,
+            max_answer_chars=settings.agent_max_answer_chars,
+        )
+    else:
+        interview_service = legacy_interview_service
 
     global deep_dive_service
     deep_dive_service = DeepDiveService(store=DeepDiveStore(), llm=llm_client)

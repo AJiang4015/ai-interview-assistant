@@ -44,14 +44,21 @@ class TopicTracker:
             logger.error(f"Failed to load knowledge tree {filepath}: {e}")
             return None
 
-    def get_coverage(self, session_id: str, position: str) -> dict:
-        """Get topic coverage statistics for a session."""
+    def get_coverage(self, session_id: str, position: str,
+                     exclude_sources: Optional[tuple[str, ...]] = None) -> dict:
+        """Get topic coverage statistics for a session.
+
+        ``exclude_sources``（F9 冻结）：非空时过滤 source 命中该集合的问题行
+        （agent 模式传 ("followup",)，默认 None 保持 legacy 行为不变）。
+        """
         tree = self.get_tree(position)
         if not tree:
             return {"categories": {}, "weakest": None, "untouched": [], "total_covered": 0, "total_topics": 0}
 
         # Collect covered topics from the database
         questions = self._store.get_questions(session_id)
+        if exclude_sources:
+            questions = [q for q in questions if q.get("source") not in exclude_sources]
         covered_topics = set()
         covered_categories = {}
         for q in questions:
