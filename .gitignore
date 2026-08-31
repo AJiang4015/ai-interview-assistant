@@ -89,6 +89,8 @@ $RECYCLE.BIN/
 
 # Testing
 .pytest_cache/
+.pytest_local_tmp/
+.pytest_tmp_*/
 .coverage
 .coverage.*
 htmlcov/
