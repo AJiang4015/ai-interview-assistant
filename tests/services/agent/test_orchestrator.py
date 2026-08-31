@@ -182,6 +182,44 @@ async def test_illegal_transition_after_end(env_dir):
         await s["svc"].answer(res["question"]["id"], "再来一次", username="u1")
 
 
+# ---------------------------------------------------------------- 11. 跨会话画像驱动（W2 下）
+
+@pytest.mark.asyncio
+async def test_cross_session_profile_drives_session_b(env_dir):
+    """session A 低分 → 画像（weak_points/accuracy/level）→ session B INIT 注入（难度+薄弱点）。"""
+    # session A：低分（score 3，主题 JVM）→ 画像更新
+    s = build_stack(
+        env_dir, max_rounds=1,
+        evaluation='{"score": 3, "comment": "差", "score_reason": "r", "reference_answer": "", "tags": ["JVM"]}',
+    )
+    res_a = await s["svc"].start("Java后端", username="u1")
+    await s["svc"].answer(res_a["question"]["id"], "回答内容足够长避免追问：" + "a" * 300, username="u1")
+
+    # 画像已按 E6/F8 口径写入（accuracy=3.0，JVM 薄弱，level=初级）
+    prof = s["orch"]._profile_store.get("u1")
+    assert prof["accuracy"] == 3.0
+    assert "JVM" in prof["weak_points"]
+    assert prof["level"] == "初级"
+
+    # session B：INIT 注入 → 难度来自 level（初级→easy）；薄弱点注入 prompt
+    captured = {}
+
+    async def recording_llm(prompt, system=None):
+        captured["prompt"] = prompt
+        return '{"question": "第1题：什么是 JVM 内存模型？", "difficulty": "hard", "knowledge_tags": ["JVM"], "topic": "JVM", "category": "JVM"}'
+
+    s["orch"]._llm_call = recording_llm
+    s["orch"]._llm_call_light = recording_llm
+    res_b = await s["svc"].start("Java后端", username="u1")
+    assert res_b["question"]["content"]
+    # 难度注入：目标难度由画像 level 推导为 easy（LLM 输出 hard 但 prompt 目标为 easy）
+    assert "目标难度：easy" in captured["prompt"]
+    # 薄弱点注入：画像 weak_points 进 prompt（跨会话影响主题选择）
+    assert "薄弱点：JVM" in captured["prompt"]
+    # followup 不计入画像：session A 仅主问题 1 条 history
+    assert len(prof["history"]) == 1
+
+
 # ---------------------------------------------------------------- 10. trace 关键事件
 
 @pytest.mark.asyncio

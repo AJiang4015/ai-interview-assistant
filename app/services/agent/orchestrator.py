@@ -31,7 +31,11 @@ from app.services.agent.fallback import (
     generate_summary,
     rule_score,
 )
-from app.services.agent.profile_store import ProfileStore
+from app.services.agent.profile_store import (
+    ProfileStore,
+    compute_session_profile_patch,
+    level_to_difficulty,
+)
 from app.services.agent.roles import (
     EVALUATOR_SYSTEM,
     FOLLOWUPER_SYSTEM,
@@ -56,6 +60,9 @@ from app.services.agent.structured_output import StructuredResult, generate_stru
 from app.services.agent.tools import ToolAbortError, ToolError, ToolRegistry
 from app.services.agent.trace import ToolCallTrace, TraceRecorder, TraceRecord
 from app.storage.interview_store import InterviewStore
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 _PROMPT_VERSION = "roles.v1"
 # G9 模糊作答启发式阈值（与 state_machine g9_followup_trigger 一致，spec 附录 B G9）
@@ -144,14 +151,26 @@ class AgentOrchestrator:
         return ctx.state if ctx else None
 
     async def start(self, position: str, username: str = "", personalized_context: str = "") -> dict:
-        """INIT → QUESTIONING →（出题节点）→ AWAITING_ANSWER。返回 {session_id, question}。"""
+        """INIT → QUESTIONING →（出题节点）→ AWAITING_ANSWER。返回 {session_id, question}。
+
+        画像驱动（E6/决策 6）：start 读取画像 level → 初始难度；薄弱点经出题节点
+        get_profile 注入 prompt（跨会话影响主题选择）。
+        """
         session = self._store.create_session(position, username=username)
         sid = session["id"]
+        initial_difficulty = "medium"
+        if self._profile_store is not None and username:
+            try:
+                profile = self._profile_store.get(username)
+                initial_difficulty = level_to_difficulty(profile.get("level"))
+            except Exception:  # noqa: BLE001 —— 画像读取失败不影响开局
+                initial_difficulty = "medium"
         ctx = SessionContext(
             session_id=sid, user_id=username, position=position,
             state=AgentState.INIT, round=1,
             followup_budget=self._max_followup_depth,
             personalized_context=personalized_context,
+            current_difficulty=initial_difficulty,
         )
         self._sessions[sid] = ctx
         self._recorders[sid] = TraceRecorder(sid, self._trace_dir, self._trace_retention)
@@ -375,6 +394,14 @@ class AgentOrchestrator:
         self._step(ctx, AgentState.SUMMARIZING, AgentEvent.SUMMARIZE_DONE,
                    answered_rounds=answered, summary_ready=True)
         self._record(ctx, event="session_end", state=AgentState.END.value)
+        # E6/F8：SUMMARIZING 批量更新画像（G8 处经 update_profile 工具写入；失败不阻塞收尾）
+        if self._profile_store is not None and ctx.user_id:
+            try:
+                prev = self._profile_store.get(ctx.user_id)
+                patch = compute_session_profile_patch(session_id, questions, prev)
+                await self._run_tool(ctx, "update_profile", user_id=ctx.user_id, patch=patch)
+            except Exception as e:  # noqa: BLE001 —— 画像写入失败仅告警
+                logger.warning("profile update failed for session %s: %s", session_id, e)
         rec = self._recorders.pop(session_id, None)
         if rec:
             rec.close()

@@ -28,7 +28,15 @@ from app.services.agent.model_gateway import (
     TaskSpec,
 )
 from app.services.agent.orchestrator import AgentOrchestrator, SessionContext
-from app.services.agent.profile_store import EMPTY_PROFILE, ProfileStore, SessionProfileStore
+from app.services.agent.profile_store import (
+    EMPTY_PROFILE,
+    ProfileStore,
+    RedisProfileStore,
+    SessionProfileStore,
+    compute_session_profile_patch,
+    level_to_difficulty,
+    make_profile_store,
+)
 from app.services.agent.roles import (
     EVALUATOR_ROLE,
     FOLLOWUPER_ROLE,
@@ -168,6 +176,10 @@ __all__ = [
     "EMPTY_PROFILE",
     "ProfileStore",
     "SessionProfileStore",
+    "RedisProfileStore",
+    "make_profile_store",
+    "compute_session_profile_patch",
+    "level_to_difficulty",
     # trace
     "TRACE_SCHEMA_VERSION",
     "TRACE_EVENT_TYPES",

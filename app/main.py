@@ -204,8 +204,14 @@ async def lifespan(app: FastAPI):
     )
     if settings.interview_mode == "agent":
         from app.services.agent.agent_service import build_agent_service
+        from app.services.agent.profile_store import make_profile_store
         from app.services.agent.state_machine import EscapeHatchConfig
 
+        # 长期画像：Redis 可用 → RedisProfileStore；不可用 → 自动降级会话内
+        agent_profile_store = make_profile_store(
+            host=settings.redis_host, port=settings.redis_port, db=settings.redis_db,
+            password=settings.redis_password or None,
+        )
         interview_service = build_agent_service(
             store=interview_store,
             llm=llm_client,
@@ -213,6 +219,7 @@ async def lifespan(app: FastAPI):
             topic_tracker=topic_tracker,
             resume_parser=resume_parser,
             legacy_readonly=legacy_interview_service,
+            profile_store=agent_profile_store,
             trace_dir=settings.agent_trace_dir,
             trace_retention=settings.agent_trace_retention,
             escape_config=EscapeHatchConfig.from_settings(),
