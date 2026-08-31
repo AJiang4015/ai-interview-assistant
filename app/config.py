@@ -57,7 +57,8 @@ class Settings(BaseSettings):
     sample_eval_rate: float = 0.05
     faithfulness_threshold: float = 0.6
     session_token_budget: float = 1.0
-    token_price: dict = {"qwen-turbo": {"input": 0.3, "output": 0.6}}
+    token_price: dict = {"qwen-turbo": {"input": 0.3, "output": 0.6},
+                         "qwen-plus": {"input": 0.8, "output": 2.0}}  # 单价（元/百万tokens），按百炼刊例，上线前核实
 
     # ===== 面试/复习画像 =====
     # 今日一题在用户无历史数据、也无此前面试岗位记录时回退的全局默认岗位
@@ -68,6 +69,31 @@ class Settings(BaseSettings):
     # 存量旧面试数据的归属账号：启动时把 username='' 的场次认领到该账号；
     # 留空表示旧数据不被任何用户认领（对任何登录用户访问均返回 403）
     legacy_data_owner: str = ""
+
+    # ===== Agent 编排（agent-dev，见 2026-08-31-agent-orchestration-refactor-impl-spec.md）=====
+    # 面试实现选择：legacy（存量 InterviewService，默认）| agent（确定性编排 Agent）
+    interview_mode: str = "legacy"
+    # 附录 C 全局逃生舱上限（默认值 = spec §14 / 附录 C）
+    agent_max_rounds: int = 15
+    agent_max_structured_retries: int = 3
+    agent_max_consecutive_failures: int = 3
+    agent_max_total_fallbacks: int = 5
+    agent_node_timeout_sec: int = 60
+    agent_max_transitions: int = 200
+    agent_max_reask_per_topic: int = 1
+    # 附录 B 门禁参数
+    agent_followup_enabled: bool = True
+    agent_max_followup_depth: int = 1
+    agent_max_answer_chars: int = 2000
+    agent_max_context_chars: int = 4000
+    # 附录 H trace
+    agent_trace_dir: str = "data/traces"
+    agent_trace_retention: int = 200
+    # 附录 E5 模型分级（light→turbo / heavy→plus）
+    agent_light_model: str = "qwen-turbo"
+    agent_heavy_model: str = "qwen-plus"
+    # 附录 A5 编排侧多方案并行（默认关）
+    agent_parallel_candidates: bool = False
 
     # ===== 认证与跨域 =====
     # JWT 签名密钥：生产必须通过 .env 提供（JWT_SECRET），缺失则拒绝启动，避免可预测的默认值
