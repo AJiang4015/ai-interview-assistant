@@ -48,5 +48,5 @@
 ## 3. 环境最低要求
 
 - 后端 Python 3.10+；建议用 Conda 隔离环境。
-- 依赖外部服务：Redis（`192.168.127.101:6379`）、百炼 LLM、硅基 Embedding/Rerank；可选 Grafana/OTel。
+- 依赖外部服务：Redis、百炼 LLM、硅基 Embedding/Rerank；可选 Grafana/OTel（地址与配置见 `ARCHITECTURE.md` §2）。
 - 命令 / 启动 / 测试见 `PROCESS.md` §7；架构与模块索引见 `ARCHITECTURE.md`。

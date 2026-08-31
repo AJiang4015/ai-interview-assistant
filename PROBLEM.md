@@ -2,8 +2,7 @@
 
 > **定位：Problem Registry / Index，不是 Problem Encyclopedia。**
 > 本文件只负责问题的**注册、状态与导航**：ID、Severity、Status、一句话摘要、关联 DR / Spec / Test、修复证据与链接。
-> 重大 / 重要问题的完整调查过程（Investigation / Evidence / Root Cause / Solution / Regression / History）一律在 **`docs/problems/Pxxx-*.md`**，本文件**禁止复制完整正文**。
-> 适用项目：RAG 知识库 / Java 程序员智能面试助手（Interview RAG）。
+> 重大 / 重要问题的完整调查过程（Investigation / Evidence / Root Cause / Solution / Regression / History）一律在 **`docs/problems/Pxxx-*.md`**，本文件**禁止复制完整正文**。> 适用项目：RAG 知识库 / Java 程序员智能面试助手（Interview RAG）。
 
 ---
 
@@ -21,12 +20,12 @@
 
 | ID | Severity | Status | 一句话摘要 | 关联 DR | 关联 Spec / Test | 详细档案 |
 |----|----------|--------|-----------|--------|------------------|----------|
-| P001 | High | **Resolved**（`e41788e`） | 响应缓存 key 混入 session_id/msg_count，命中率趋近 0；已改为仅原始问题 + 6 回归测试 | DR-004 | Door 5；`tests/services/test_cache_service.py` | [P001-cache-key.md](problems/P001-cache-key.md) |
-| P002 | High | Resolved（`55a654f`） | 前端 SSE 流式输出在会话切换后中断/写错会话；多根因，已固化 D1–D4/D11 | DR-005 | Door 2/3/4/11 | [P002-sse-session.md](problems/P002-sse-session.md) |
-| P003 | High | Resolved | 本地 bge-reranker 加载触发 OMP 崩溃；改走 SiliconFlow API | DR-003 | Door 6 | [P003-local-reranker-resource-failure.md](problems/P003-local-reranker-resource-failure.md) |
+| P001 | High | **Resolved**（`e41788e`） | 响应缓存 key 混入 session_id/msg_count，命中率趋近 0；已改为仅原始问题 + 6 回归测试 | DR-004 | Door 5；`tests/services/test_cache_service.py` | [P001-cache-key.md](docs/problems/P001-cache-key.md) |
+| P002 | High | Resolved（`55a654f`） | 前端 SSE 流式输出在会话切换后中断/写错会话；多根因，已固化 D1–D4/D11 | DR-005 | Door 2/3/4/11 | [P002-sse-session.md](docs/problems/P002-sse-session.md) |
+| P003 | High | Resolved | 本地 bge-reranker 加载触发 OMP 崩溃；改走 SiliconFlow API | DR-003 | Door 6 | [P003-local-reranker-resource-failure.md](docs/problems/P003-local-reranker-resource-failure.md) |
 | P004 | Medium | **Merged → P003** | 本地 reranker 需 HuggingFace 下载，国内网络失败；与 P003 同源解决 | DR-003 | 见 P003 | 见 P003 档案 |
-| P005 | Medium | Resolved（`d42b7bf`） | Markdown 渲染未生效（textContent 而非 innerHTML）；改走 marked→DOMPurify 安全链 | DR-009 | Door 10 | [P005-markdown-render.md](problems/P005-markdown-render.md) |
-| P006 | High | **Active**（约束固化） | 索引陈旧 state / 单 worker 落盘约束；约束已固化，多 worker 进程级锁未实现 | DR-002 | Door 9；索引幂等重建测试 | [P006-single-worker-persistence.md](problems/P006-single-worker-persistence.md) |
+| P005 | Medium | Resolved（`d42b7bf`） | Markdown 渲染未生效（textContent 而非 innerHTML）；改走 marked→DOMPurify 安全链 | DR-009 | Door 10 | [P005-markdown-render.md](docs/problems/P005-markdown-render.md) |
+| P006 | High | **Active**（约束固化） | 索引陈旧 state / 单 worker 落盘约束；约束已固化，多 worker 进程级锁未实现 | DR-002 | Door 9；索引幂等重建测试 | [P006-single-worker-persistence.md](docs/problems/P006-single-worker-persistence.md) |
 | P007 | High | Resolved（`1913f75`） | `monitor` 变量遮蔽导致 OTel 上报崩溃 | — | — | （摘要级） |
 | P008 | Medium | Resolved（`45746e1`/`bbb04a5`） | 评测服务未初始化 / 评测 JSON 解析脆弱；已加固 | DR-008 | Door 14 | （摘要级） |
 | P009 | Medium | Resolved（`0e1b3b8`） | split_text/_save_state 异常未隔离，单块失败拖垮整批 | — | Door 8 | （摘要级） |

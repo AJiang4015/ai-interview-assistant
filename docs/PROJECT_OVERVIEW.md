@@ -10,7 +10,7 @@
 - 系统架构 / 数据流 / 依赖方向 → [ARCHITECTURE.md](../ARCHITECTURE.md)
 - 技术栈（唯一事实来源）→ [ARCHITECTURE.md](../ARCHITECTURE.md) §2
 - 模块 / 目录索引 → [ARCHITECTURE.md](../ARCHITECTURE.md) §5
-- 分层契约（各层负责什么 / 禁止什么）→ [app/api/API_LAYER.md](../../app/api/API_LAYER.md) · [app/services/SERVICES_LAYER.md](../../app/services/SERVICES_LAYER.md) · [app/storage/STORAGE_LAYER.md](../../app/storage/STORAGE_LAYER.md) · [app/utils/UTILS_LAYER.md](../../app/utils/UTILS_LAYER.md)
+- 分层契约（各层负责什么 / 禁止什么）→ [app/api/API_LAYER.md](../app/api/API_LAYER.md) · [app/services/SERVICES_LAYER.md](../app/services/SERVICES_LAYER.md) · [app/storage/STORAGE_LAYER.md](../app/storage/STORAGE_LAYER.md) · [app/utils/UTILS_LAYER.md](../app/utils/UTILS_LAYER.md)
 - 开发 / 修复 / 实验 / 验收流程 → [PROCESS.md](../PROCESS.md)
 - 长期技术决策（DR）→ [DECISIONS.md](../DECISIONS.md)
 - 已知问题注册表（索引 + 档案）→ [PROBLEM.md](../PROBLEM.md) · [docs/problems/](problems/)

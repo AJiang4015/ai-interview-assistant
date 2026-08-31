@@ -51,4 +51,4 @@ API 层：/api/query · /stream · /interview · /auth(JWT) · /eval · /session
 
 - 检索链路细节 → 见 [关键技术决策说明](key-decisions.md)
 - 检索质量量化过程（消融）→ 见 [Part B 复盘](../../docs/evaluation/2026-08-29-partB-retrieval-upgrade-review.md) 与 Part A spec
-- 为什么面试检索迁移、而没继续优化出题 query → 见 [为何暂缓知识树 query](why-not-knowledge-tree-query.md) + Part C
+- 为什么面试检索迁移、而没继续优化出题 query → 见 [为何暂缓知识树 query](../evaluation/2026-08-29-knowledge-tree-query-partC.md) + Part C
