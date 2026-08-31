@@ -36,6 +36,7 @@ from app.services.sparse_retriever import SparseRetriever
 from app.services.cache_service import ResponseCache
 from app.services.retrieval_facade import RetrievalFacade
 from app.api.evaluation import router as evaluation_router
+from app.api.agent_trace import router as agent_trace_router
 from app.services.evaluation_service import EvaluationService
 from app.services.eval_testset import TestSetGenerator
 
@@ -278,6 +279,7 @@ app.include_router(auth_router)
 app.include_router(interview_router)
 app.include_router(deep_dive_router)
 app.include_router(evaluation_router)
+app.include_router(agent_trace_router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():

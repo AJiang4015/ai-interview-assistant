@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Trace 查看器（Demo 只读）</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { background: #1f2937; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  main { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+  .bar { display: flex; gap: 8px; margin-bottom: 14px; }
+  input { flex: 1; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  button { padding: 8px 18px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; font-size: 14px; }
+  button:hover { background: #1d4ed8; }
+  .summary { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; font-size: 13px; }
+  .summary b { color: #111827; }
+  .event { background: #fff; border: 1px solid #e5e7eb; border-left: 4px solid #9ca3af; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+  .event.transition { border-left-color: #2563eb; }
+  .event.node_started { border-left-color: #7c3aed; }
+  .event.node_finished { border-left-color: #7c3aed; }
+  .event.tool_call { border-left-color: #059669; }
+  .event.fallback { border-left-color: #d97706; }
+  .event.escape { border-left-color: #dc2626; }
+  .event.session_end { border-left-color: #111827; }
+  .ev-head { font-weight: 600; color: #111827; }
+  .ev-meta { color: #6b7280; margin-top: 2px; word-break: break-all; }
+  .error { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Trace 查看器</h1>
+  <span style="font-size:12px;opacity:.7">Demo 只读入口 · 非产品能力 · 直读 data/traces/*.jsonl</span>
+</header>
+<main>
+  <div class="bar">
+    <input id="sid" placeholder="输入 session_id（demo 输出会打印）" />
+    <button onclick="load()">加载 Trace</button>
+  </div>
+  <div id="summary" class="summary" style="display:none"></div>
+  <div id="events"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function load() {
+      const sid = $("sid").value.trim();
+      if (!sid) { showError("请输入 session_id（Demo 脚本输出中可见）。"); return; }
+      try {
+        const res = await fetch(`/api/agent/traces/${encodeURIComponent(sid)}`);
+        if (!res.ok) { showError(`HTTP ${res.status}：${(await res.json()).detail || "读取失败"}`); return; }
+        const data = await res.json();
+        render(sid, data);
+      } catch (e) {
+        showError("请求失败：" + e.message);
+      }
+    }
+
+    function render(sid, data) {
+      $("events").innerHTML = "";
+      $("summary").style.display = "block";
+      const kinds = {};
+      data.events.forEach(e => { kinds[e.event] = (kinds[e.event] || 0) + 1; });
+      $("summary").innerHTML = "";
+      const s = document.createElement("div");
+      s.append("session: ", bold(sid), " · 共 ", bold(String(data.count)), " 条事件 · 分布：");
+      Object.entries(kinds).forEach(([k, n]) => s.append(bold(` ${k}=${n}`)));
+      $("summary").append(s);
+
+      data.events.forEach(e => {
+        const div = document.createElement("div");
+        div.className = "event " + (e.event || "");
+        const head = document.createElement("div");
+        head.className = "ev-head";
+        head.textContent = `[${e.event || "?"}] ${e.state || ""}${e.node ? " · " + e.node : ""}`;
+        div.appendChild(head);
+        const meta = document.createElement("div");
+        meta.className = "ev-meta";
+        const parts = [];
+        if (e.role) parts.push("role=" + e.role);
+        if (e.model) parts.push("model=" + e.model);
+        if (e.retries !== undefined) parts.push("retries=" + e.retries);
+        if (e.validated !== undefined) parts.push("validated=" + e.validated);
+        if (e.fallback_used) parts.push("fallback=" + e.fallback_used);
+        if (e.latency_ms !== undefined && e.latency_ms !== null) parts.push("latency_ms=" + e.latency_ms);
+        if (e.ts) parts.push(e.ts);
+        meta.textContent = parts.join("  ");
+        div.appendChild(meta);
+        if (e.input_summary) {
+          const p = document.createElement("div"); p.className = "ev-meta"; p.textContent = "input: " + e.input_summary;
+          div.appendChild(p);
+        }
+        $("events").appendChild(div);
+      });
+    }
+
+    function bold(text) { const b = document.createElement("b"); b.textContent = text; return b; }
+    function showError(msg) {
+      $("events").innerHTML = "";
+      $("summary").style.display = "none";
+      const div = document.createElement("div");
+      div.className = "error";
+      div.textContent = msg;
+      $("events").appendChild(div);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const q = new URLSearchParams(location.search).get("session");
+      if (q) { $("sid").value = q; load(); }
+    });
+  </script>
+</main>
+</body>
+</html>
