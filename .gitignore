@@ -91,6 +91,7 @@ $RECYCLE.BIN/
 .pytest_cache/
 .pytest_local_tmp/
 .pytest_tmp_*/
+.pip_tmp/
 .coverage
 .coverage.*
 htmlcov/
