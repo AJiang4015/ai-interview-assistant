@@ -1,6 +1,6 @@
 # RAG Knowledge Assistant — 可评测、可降级、可观测、可持久化的工程化 RAG 系统
 
-**面向 Java / 后端程序员面试场景**：从 RAG Demo 演进而来的工程化 RAG 系统——用户上传个人技术知识库（Markdown / PDF / Word），系统通过 `查询改写 → 混合检索(RRF) → 重排 → LLM 生成` 流水线作答，并扩展出 AI 模拟面试、简历深挖、复习画像、离线评测；当前主线正在其上构建**确定性编排 Agent 面试系统**。
+**面向 Java / 后端程序员面试场景**：从 RAG Demo 演进而来的工程化 RAG 系统——用户上传个人技术知识库（Markdown / PDF / Word），系统通过 `查询改写 → 混合检索(RRF) → 重排 → LLM 生成` 流水线作答，并扩展出 AI 模拟面试、简历深挖、复习画像、离线评测。其中「面试官」已由硬编码服务升级为 **legacy + 确定性编排 Agent 双实现**——二者经 `INTERVIEW_MODE` 一键切换，API / 前端零改动。
 
 > 项目的工程重点不是"接一个 LLM"，而是把**检索质量工程化**：用评测闭环量化、用统一检索门面复用、用消融实验驱动配置决策，并让核心链路在外部依赖故障时优雅降级。
 
@@ -50,7 +50,7 @@ Testset → Baseline → Ablation → Metrics(recall@k / mrr / faithfulness) →
 
 - **Core RAG**：ingestion · retrieval · rerank · generation · evaluation
 - **Engineering**：cache · session · persistence · auth/isolation · SSE · graceful degradation · observability · cost control
-- **Product**：AI 面试（legacy + 进行中的确定性编排 Agent）· 简历深挖 · 复习画像
+- **Product**：AI 面试（legacy + Agent 确定性编排双实现）· 简历深挖 · 复习画像 · 离线评测
 
 ---
 
@@ -61,7 +61,8 @@ Testset → Baseline → Ablation → Metrics(recall@k / mrr / faithfulness) →
 | 检索消融（40 条手写集） | 全开 recall 0.913 / mrr 0.798 / faithfulness 0.956；单开 rerank mrr 最高 0.829 |
 | 生产基线（120 条完整集） | recall 0.904 / mrr 0.819 / faithfulness 0.961 |
 | 面试检索升级（Part B，17 条） | MRR **0.559 → 0.588**，recall 持平 0.588（不劣于升级前） |
-| 回归 | `pytest` 全量通过（Part B 验收时 143 passed；agent W1 单测通过） |
+| 回归 | `pytest` 全量通过（最终技术审查时 161 passed；smoke 27/27、trace 断言全过） |
+| Agent vs Legacy 对照（W2 下，17 条子集） | 检索 recall@3 0.588 / MRR 0.559（与 legacy 共用同一管线）；trace 流转合法率 100%；**评分样本小且含模型差异，不作优劣结论** |
 
 > 数字口径与完整分析以 [`docs/evaluation/`](docs/evaluation/) 为准。
 
@@ -110,7 +111,7 @@ curl http://127.0.0.1:8000/api/health
 | `SILICONFLOW_API_KEY` / `SILICONFLOW_MODEL` | 硅基 Embedding | `Qwen/Qwen3-Embedding-4B` |
 | `RERANK_MODEL` | 硅基 Rerank | `Qwen/Qwen3-Reranker-4B` |
 | `JWT_SECRET` | 认证签名密钥（**必填**） | — |
-| `INTERVIEW_MODE` | `legacy`（默认）/ `agent`（确定性编排，进行中） | `legacy` |
+| `INTERVIEW_MODE` | `legacy`（默认）/ `agent`（确定性编排 Agent，已可运行演示） | `legacy` |
 
 完整配置见 [app/config.py](app/config.py) 与 [.env.example](.env.example)。
 
@@ -126,6 +127,9 @@ python scripts/eval_runner.py --limit 5        # 冒烟；去掉 --limit 跑全�
 python scripts/eval_interview_baseline.py
 python scripts/eval_interview_upgraded.py
 
+# Agent 编排（W2 下）legacy vs agent 对照评测 + trace 断言（可复现）
+python scripts/eval_agent_vs_legacy.py
+
 # 全量测试
 python -m pytest tests/
 ```
@@ -136,7 +140,12 @@ python -m pytest tests/
 
 ## 五、当前状态
 
-分支 `agent-dev`（main 冻结）：Agent 编排化改造 W1 进行中（状态机 / 门禁 / 逃生舱 / trace / 三角色 / 结构化输出 / Tool 层 / ProfileStore 已落地，Day 1–3），RAG 侧 Part A/B 已闭环。当前阶段、Blockers、风险与下一步见 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
+RAG 侧 Part A/B 与 Agent 编排化改造 **W1–W3 均已闭环**（分支 `agent-dev`，main 冻结）。
+
+- **RAG 侧**：检索质量评测闭环 + 统一检索门面 `RetrievalFacade` 已落地，问答与面试共用一条已验证管线。
+- **Agent 侧**：确定性状态机 / 门禁 / 全局逃生舱 / trace 归因 / 三角色 + 结构化输出重试 / 确定性工具层 / MCP 协议链路（含回退）/ 多模型分级 / Profile 记忆 / legacy-vs-agent 对照评测全部落地，并通过对**对抗式最终技术审查**。两条面试实现由 `INTERVIEW_MODE` 切换。
+
+> **已知边界（如实声明，非隐藏）**：当前为单 worker 演示级；会话存于进程内（重启即丢）；trace 无鉴权；预算逃生（`over_budget`）与成本/结构化输出聚合指标未接线。这些已列入技术债清单与生产化路径，详见 [Project 最终技术审查](docs/evaluation/2026-09-01-agent-final-review.md) 与 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
 
 ---
 
