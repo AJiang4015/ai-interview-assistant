@@ -128,3 +128,8 @@ data/traces/
 
 # Local tooling (agent/ssh helper scripts)
 .tools/
+
+# AI 前端设计工具的瞬态运行产物（非设计交付物，不入库）
+interview-rag-prototype/
+interview-rag-prototype-draft/
+interview-rag-visual-exploration/
